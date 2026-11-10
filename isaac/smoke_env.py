@@ -15,6 +15,7 @@ parser = argparse.ArgumentParser()
 AppLauncher.add_app_launcher_args(parser)
 parser.add_argument("--num_envs", type=int, default=4)
 parser.add_argument("--steps", type=int, default=50)
+parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha")
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -25,7 +26,7 @@ import torch  # noqa: E402
 
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
-TASK = "Isaac-Velocity-Flat-Nezha"
+TASK = args_cli.task
 
 
 def main() -> int:

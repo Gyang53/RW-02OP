@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -24,7 +25,11 @@ simulation_app = app_launcher.app
 from isaaclab.sim.converters import MjcfConverter, MjcfConverterCfg  # noqa: E402
 
 WS = Path(__file__).resolve().parents[1]
-SRC = WS / "assets/nezha/models/nezhav1/mjcf/nezha_isaac.xml"
+# NEZHA_MJCF 可指向缩放版 MJCF（如 mjmodel_s06.xml），转换产物按 xml 文件名命名：
+#   mjmodel.xml     -> nezha_isaac.xml -> nezha_isaac/nezha_isaac.usda
+#   mjmodel_s06.xml -> mjmodel_s06.xml 的清理版 -> mjmodel_s06/…usda（不覆盖原模型）
+_src_name = os.environ.get("NEZHA_MJCF_NAME", "nezha_isaac.xml")
+SRC = WS / "assets/nezha/models/nezhav1/mjcf" / _src_name
 USD_DIR = SRC.parent
 
 

@@ -12,8 +12,17 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "assets/nezha/models/nezhav1/mjcf/mjmodel.xml"
-DST = SRC.with_name("nezha_isaac.xml")
+import os
+
+SRC = Path(
+    os.environ.get(
+        "NEZHA_MJCF",
+        Path(__file__).resolve().parents[1] / "assets/nezha/models/nezhav1/mjcf/mjmodel.xml",
+    )
+)
+DST = SRC.with_name(
+    os.environ.get("NEZHA_CLEAN_NAME", "nezha_isaac.xml")
+)
 DROP = {"slope", "base_Estimate"}
 
 
