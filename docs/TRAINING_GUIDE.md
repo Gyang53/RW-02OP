@@ -12,11 +12,12 @@
 3. [快速验证：能不能跑](#3-快速验证能不能跑)
 4. [训练你的第一个策略](#4-训练你的第一个策略)
 5. [看训练效果（Newton Viewer）](#5-看训练效果newton-viewer)
-6. [在 MuJoCo 仿真里用键盘控制](#6-在-mujoco-仿真里用键盘控制)
-7. [调优指南：策略不好怎么办](#7-调优指南策略不好怎么办)
-8. [进阶：加新能力（蹲下/起身/单边板）](#8-进阶加新能力)
-9. [常见问题排查](#9-常见问题排查)
-10. [文件速查表](#10-文件速查表)
+6. [Newton Viewer 键盘控制机器人](#6-newton-viewer-键盘控制机器人)
+7. [在 MuJoCo 仿真里用键盘控制](#7-在-mujoco-仿真里用键盘控制)
+8. [调优指南：策略不好怎么办](#8-调优指南策略不好怎么办)
+9. [进阶：加新能力（蹲下/起身/单边板）](#9-进阶加新能力)
+10. [常见问题排查](#10-常见问题排查)
+11. [文件速查表](#11-文件速查表)
 
 ---
 
@@ -39,6 +40,7 @@
 │  ├── policy_node_isaac.py  ROS2 节点（mjsim 里跑策略）       │
 │  ├── eval_getup.py       起身评测                            │
 │  └── play_viewer.sh      Newton Viewer 看效果                │
+│      play_viewer_kb.sh   Newton Viewer + 键盘控制（I/J/K/L）  │
 │                                                             │
 │  rl/                    MuJoCo 原生 PPO（备选，CPU/GPU）     │
 │  ├── nezha_env.py        CPU 环境                            │
@@ -256,15 +258,111 @@ cd /home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
 | 走路姿态 | 线框平稳前进，轮子持续旋转 | 速度策略正常 |
 | 转向 | A/D 按下后平滑转弯 | 转向策略正常 |
 | 蹲下/站起 | Z 按住后机身下降（需要 policy_node 在线） | 高度策略正常 |
-| 摔倒频率 | 线框侧翻不恢复 | 策略有问题，回到第 7 章调优 |
+| 摔倒频率 | 线框侧翻不恢复 | 策略有问题，回到第 8 章调优 |
 
 ---
 
-## 6. 在 MuJoCo 仿真里用键盘控制
+## 6. Newton Viewer 键盘控制机器人
+
+在 Newton Viewer 里直接回放策略并用键盘驱动机器人走路——不用开 ROS2、不用三个终端，
+一个命令就是一个带键盘控制的图形窗口。
+
+### 6.1 启动
+
+```bash
+cd /home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
+
+# 自动用最新的 checkpoint
+./isaac/play_viewer_kb.sh
+
+# 或指定 checkpoint 和环境数（推荐已验证的 2026-11-06_18-15-41/model_2998.pt）
+./isaac/play_viewer_kb.sh \
+    /home/yangg/data/isaacsim/IsaacLab/logs/rsl_rl/nezha_flat/2026-11-06_18-15-41/model_2998.pt 1
+```
+
+**第二个参数**是并行环境数。想看 16 个机器人一起走就填 16，键盘命令对所有环境生效。
+
+> **checkpoint 选择很关键**：`ls -t` 找到的"最新"不一定是走得最好的。
+> 训练中途切换任务（如加入起身训练）可能让速度策略退化。
+> 挑 checkpoint 先用 `isaac/eval_policy.py --visualizer none` 量化验证，再拿来 Viewer 回放。
+> 已验证可用的：`2026-11-06_18-15-41/model_2998.pt`（vx 误差 0.084 m/s，20 s 不摔）。
+
+### 6.2 键盘操作
+
+**查看器窗口必须在前台**（点一下窗口标题栏）。首次启动约 2-3 分钟（加载 USD + mesh），
+终端出现 `[kb] viewer 已绑定: NewtonViewerGL` 说明键盘通道接好了。
+
+| 按键 | 功能 | 说明 |
+|---|---|---|
+| `I`（按住） | 前进（1.0 m/s） | 释放即停 |
+| `J`（按住） | 左转（−0.5 rad/s） | |
+| `L`（按住） | 右转（+0.5 rad/s） | |
+| `I` + `L` | 边走边右转 | 命令可叠加 |
+| `K` | 停止（命令清零） | 不按任何键也是停止 |
+| 关闭窗口 / Ctrl+C | 退出 | |
+
+| 按键 | 实测表现（model_2998.pt） |
+|---|---|
+| 站立（不按键） | z≈0.72 m 稳定，漂移 ±0.01 m/s |
+| `I` | vx 跟踪 0.97–1.04 m/s |
+| `I`+`L` | vx≈1.0 m/s 同时转向 |
+
+### 6.3 终端遥测
+
+每 2 秒打印一行状态，不用盯窗口也能确认在动：
+
+```
+[kb] viewer 已绑定: NewtonViewerGL
+[t=  2.0s] step=100 cmd=(0.00,+0.00) vx=+0.03 z=0.720 h_cmd=0.70
+[t=  2.0s] step=16300 cmd=(1.00,+0.00) vx=+0.98 z=0.714 h_cmd=0.70
+```
+
+| 字段 | 含义 |
+|---|---|
+| `cmd=(vx, wz)` | 当前键盘指令 |
+| `vx` | 机器人实际前进速度 (m/s)——与 cmd 前半接近 = 跟踪正常 |
+| `z` | 机身高度 (m)——稳定在 0.70–0.73 = 没摔 |
+| `h_cmd` | 高度指令（回放时固定 0.70，防止每 10 s 随机蹲起） |
+
+### 6.4 修改速度/转向大小
+
+编辑 `isaac/play_keyboard.py` 里 `KeyboardCommand.poll()`：
+
+```python
+if self._viewer.is_key_down(self._key_forward):
+    fwd = 1.0        # 改这里：最大前进速度 (m/s)
+if self._viewer.is_key_down(self._key_turn_left):
+    turn -= 0.5      # 改这里：左转角速度 (rad/s)
+```
+
+### 6.5 常见问题
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| 按键没反应 | 窗口不在前台 | 点一下 Newton Viewer 窗口再按 |
+| 按键没反应、也没绑定日志 | viewer 还没创建完 | 等出现 `[kb] viewer 已绑定`（最多 3 分钟） |
+| 机器人抖动、不走 | checkpoint 不会走路（训练退化） | 换 `2026-11-06_18-15-41/model_2998.pt`，用 eval_policy 先验证 |
+| 机器人每 10 s 蹲一下 | 高度指令被随机重采样 | 正常情况不会发生（脚本已固定 0.70）；自行改代码时注意 `height_cmd[:, 0] = 0.70` 这行 |
+| 窗口黑的 | 首次初始化慢 | 等 2-3 分钟 |
+| OOM | 显存不足 | 减小第二个参数（环境数），或关浏览器 |
+
+### 6.6 与第 7 章（MuJoCo 键盘）的区别
+
+| | 本章（play_viewer_kb.sh） | 第 7 章（policy_node + sim_node） |
+|---|---|---|
+| 物理引擎 | Newton（GPU） | MuJoCo（CPU） |
+| 终端数 | 1 个 | 3 个 |
+| 用途 | 训练效果快速回放 | 部署链路验证（与实机同构） |
+| 键盘 | I/J/K/L | W/A/S/D + Z/X 蹲站 |
+| 高度控制 | 固定 0.70 m | Z/X 可调 0.45–0.85 m |
+
+---
+
+## 7. 在 MuJoCo 仿真里用键盘控制
 
 这是策略的实际部署环节：把训练好的策略加载到 ROS2 的 MuJoCo 仿真节点里。
 
-### 6.1 导出策略
+### 7.1 导出策略
 
 ```bash
 cd /home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
@@ -275,7 +373,7 @@ python3 isaac/export_policy.py \
   --out isaac/policies/nezha_height.pt
 ```
 
-### 6.2 启动仿真 + 键盘
+### 7.2 启动仿真 + 键盘
 
 开三个终端（**启动顺序很重要：先起策略节点，再起仿真，最后起键盘**）：
 
@@ -308,9 +406,9 @@ ros2 run mjsim kb_joy
 > 反过来的话机器人会先塌在地上几秒。
 >
 > **Z/X 不生效？** 高度指令的消费方是策略节点（终端 1），不是 sim_node。
-> 如果策略节点没启动，Z/X 完全没效果。详见第 9 章排查。
+> 如果策略节点没启动，Z/X 完全没效果。详见第 10 章排查。
 
-### 6.3 调整速度和高度
+### 7.3 调整速度和高度
 
 ```bash
 # 策略节点启动参数
@@ -333,9 +431,9 @@ python3 isaac/policy_node_isaac.py --ros-args \
 
 ---
 
-## 7. 调优指南：策略不好怎么办
+## 8. 调优指南：策略不好怎么办
 
-### 7.1 训练不收敛（success_rate 上不去）
+### 8.1 训练不收敛（success_rate 上不去）
 
 **先看是哪种不好**：
 
@@ -347,7 +445,7 @@ python3 isaac/policy_node_isaac.py --ros-args \
 | 摔倒率高 | 终止太严格 | 放宽 `min_base_z` 或 `max_tilt_cos` |
 | reward 剧烈震荡 | 学习率太大 | `--lr 5e-5` |
 
-### 7.2 奖励权重速查
+### 8.2 奖励权重速查
 
 在 `nezha/flat_env_cfg.py` 里调（改完重训）：
 
@@ -368,7 +466,7 @@ self.rewards.lin_vel_z_l2.weight = -2.0            # 垂直速度惩罚（防弹
 - 侧翻 → 加大 `flat_orientation` 惩罚
 - 高度不跟 → 加大 `track_height`，减小 `std`
 
-### 7.3 物理参数调优
+### 8.3 物理参数调优
 
 在 `nezha_cfg.py`（机器人配置）里调：
 
@@ -395,7 +493,7 @@ self.rewards.lin_vel_z_l2.weight = -2.0            # 垂直速度惩罚（防弹
 | `damping` ↑ | 更稳定，但响应慢 | 轮子的 damping = 速度控制增益 |
 | `effort_limit` ↑ | 力气大 | 太大会物理发散 |
 
-### 7.4 训练技巧（从实践中总结的）
+### 8.4 训练技巧（从实践中总结的）
 
 1. **热启动**：用已有 checkpoint 继续训练新能力，比从零快 3~5 倍
    ```bash
@@ -410,7 +508,7 @@ self.rewards.lin_vel_z_l2.weight = -2.0            # 垂直速度惩罚（防弹
 
 5. **早停**：看到 `success_rate` 连续 200 iter 不涨就可以停了（Ctrl+C，checkpoint 已保存）
 
-### 7.5 sim-to-deploy 的高度观测差异（已修复，记录坑）
+### 8.5 sim-to-deploy 的高度观测差异（已修复，记录坑）
 
 **Isaac 训练时**：`height_commands` 观测 = `UniformHeightCommand.command`
 = **绝对高度**（0.45~0.85 m，`mdp.generated_commands` 直接返回）
@@ -421,7 +519,7 @@ self.rewards.lin_vel_z_l2.weight = -2.0            # 垂直速度惩罚（防弹
 **修复**：`isaac/policy_node_isaac.py` 已改为 `np.array([self.height])`（绝对高度）。
 如果策略跑起来姿态不对、蹲不下去/站不起来，先检查这里的观测格式。
 
-### 7.6 起身训练的特殊配置
+### 8.6 起身训练的特殊配置
 
 起身是特殊任务，用 `Isaac-Velocity-Flat-Nezha-GetUp`（不是普通任务）：
 
@@ -447,16 +545,16 @@ env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV \
 
 ---
 
-## 8. 进阶：加新能力
+## 9. 进阶：加新能力
 
-### 8.1 当前已有的能力
+### 9.1 当前已有的能力
 
 | 任务 | gym id | 能力 |
 |---|---|---|
 | 基础 | `Isaac-Velocity-Flat-Nezha` | 速度跟踪 + 高度 + 单边板 |
 | 起身 | `Isaac-Velocity-Flat-Nezha-GetUp` | 从倒地站起 |
 
-### 8.2 加新能力的步骤
+### 9.2 加新能力的步骤
 
 以"走斜坡"为例：
 
@@ -491,7 +589,7 @@ env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV \
    $RUN <ws>/isaac/eval_policy.py --task Isaac-Velocity-Flat-Nezha-Slope ...
    ```
 
-### 8.3 加新的观测维度
+### 9.3 加新的观测维度
 
 观测顺序（37 维）在 `flat_env_cfg.py` 的 `ObservationsCfg` 里定义：
 
@@ -510,7 +608,7 @@ class PolicyCfg(ObsGroup):
 **加新维度时注意**：要同步修改 `rl/nezha_env.py` 的 `OBS_DIM` 和
 `isaac/policy_node_isaac.py` 的 `OBS_DIM`，否则部署时维度不匹配。
 
-### 8.4 部署到实机
+### 9.4 部署到实机
 
 策略导出后的 TorchScript 可以直接在 ROS2 节点里跑。部署到实机需要：
 1. 把 `isaac/policy_node_isaac.py` 的话题从仿真改为实机驱动
@@ -520,7 +618,7 @@ class PolicyCfg(ObsGroup):
 
 ---
 
-## 9. 常见问题排查
+## 10. 常见问题排查
 
 ### Q: 训练时 GPU OOM
 ```
@@ -565,6 +663,15 @@ ros2 topic hz /mujoco_action    # 期望 >= 50 Hz
 **原因**：窗口还没完成初始化，或被其他窗口遮挡。
 **解法**：等 2-3 分钟，用 `xdotool windowraise` 把窗口提到最前。
 
+### Q: `play_viewer_kb.sh` 按键没反应
+**排查顺序**：
+1. Newton Viewer 窗口是否在前台？点一下窗口再按 `I`。
+2. 终端有没有 `[kb] viewer 已绑定: NewtonViewerGL`？没有就还在初始化，等最多 3 分钟。
+3. 遥测里 `cmd=(1.00,+0.00)` 变了吗？
+   - 变了但 `vx` 不动 → **checkpoint 问题**（策略不会走），换
+     `2026-11-06_18-15-41/model_2998.pt`，或先用 `eval_policy.py` 量化验证。
+   - 没变 → 键盘轮询没接上，重跑并确认前台。
+
 ### Q: `ros2 run mjsim` 找不到包
 **解法**：`source install/setup.bash`（每次开新终端都要）。
 
@@ -579,7 +686,7 @@ ros2 topic hz /mujoco_action    # 期望 >= 50 Hz
 
 ---
 
-## 10. 文件速查表
+## 11. 文件速查表
 
 | 路径 | 说明 |
 |---|---|
@@ -591,6 +698,7 @@ ros2 topic hz /mujoco_action    # 期望 >= 50 Hz
 | `isaac/eval_getup.py` | 起身评测 |
 | `isaac/export_policy.py` | 导出 TorchScript |
 | `isaac/play_viewer.sh` | Newton Viewer 看效果 |
+| `isaac/play_viewer_kb.sh` | Newton Viewer + 键盘控制（I/J/K/L） |
 | `isaac/policy_node_isaac.py` | ROS2 部署节点 |
 | `isaac/sim_mujoco_policy.py` | MuJoCo 离线策略测试（无 ROS） |
 | **Isaac Lab 训练配置**（完整前缀 `IsaacLab/source/isaaclab_tasks/isaaclab_tasks/core/velocity/config/`） | |
@@ -641,6 +749,7 @@ $RUN <ws>/isaac/eval_getup.py --visualizer none \
 
 # ===== 可视化 =====
 ./isaac/play_viewer.sh                                    # Newton Viewer
+./isaac/play_viewer_kb.sh <ckpt> 1                        # Newton Viewer + 键盘（I/J/K/L）
 
 # ===== 导出部署 =====
 python3 isaac/export_policy.py --checkpoint <ckpt> --out isaac/policies/xxx.pt
