@@ -23,6 +23,9 @@ AppLauncher.add_app_launcher_args(parser)
 parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha")
 parser.add_argument("--num_envs", type=int, default=1)
 parser.add_argument("--checkpoint", required=True)
+parser.add_argument("--h_crouch", type=float, default=0.45, help="Z 键蹲下目标高度 (m)")
+parser.add_argument("--h_stand", type=float, default=0.85, help="X 键站高目标高度 (m)")
+parser.add_argument("--h_mid", type=float, default=0.70, help="C 键中间高度 (m)")
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -48,11 +51,15 @@ class KeyboardCommand:
       R 强制复位所有环境（模拟"倒下后重新开始"，配合起身策略演示 getup）
     """
 
-    def __init__(self, num_envs: int, device: str, viewer=None):
+    def __init__(self, num_envs: int, device: str, viewer=None,
+                 h_crouch: float = 0.45, h_stand: float = 0.85, h_mid: float = 0.70):
         import pyglet
 
         self.commands = torch.zeros(num_envs, 3, device=device)
-        self.height = torch.full((num_envs, 1), 0.70, device=device)
+        self.height = torch.full((num_envs, 1), h_mid, device=device)
+        self._h_crouch = h_crouch
+        self._h_stand = h_stand
+        self._h_mid = h_mid
         self.reset_requested = False
         self.device = device
         self._viewer = viewer
@@ -88,11 +95,11 @@ class KeyboardCommand:
         self.commands[:, 2] = turn
         # 高度：按住持续生效，松开保持当前值（rate 限制在主循环里做）
         if self._viewer.is_key_down(self._key_crouch):
-            self.height[:, 0] = 0.45
+            self.height[:, 0] = self._h_crouch
         elif self._viewer.is_key_down(self._key_stand):
-            self.height[:, 0] = 0.85
+            self.height[:, 0] = self._h_stand
         elif self._viewer.is_key_down(self._key_mid):
-            self.height[:, 0] = 0.70
+            self.height[:, 0] = self._h_mid
         self.reset_requested = self._viewer.is_key_down(self._key_reset)
 
 
@@ -134,7 +141,13 @@ def main():
 
         sim_ctx = SimulationContext.instance()
 
-    kb = KeyboardCommand(args_cli.num_envs, env.unwrapped.device)
+    kb = KeyboardCommand(
+        args_cli.num_envs,
+        env.unwrapped.device,
+        h_crouch=args_cli.h_crouch,
+        h_stand=args_cli.h_stand,
+        h_mid=args_cli.h_mid,
+    )
     dt = env.unwrapped.step_dt
     viewer_found = False
     while simulation_app.is_running():
