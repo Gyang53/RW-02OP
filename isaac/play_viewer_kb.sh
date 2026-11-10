@@ -1,14 +1,16 @@
 #!/bin/bash
-# 在 Newton Viewer 里回放 nezhav1 训练好的策略，键盘控制运动。
+# 在 Newton Viewer 里回放 nezhav1 训练好的策略，键盘全功能控制机器人。
 #
 # cd /home/yangg/data/isaacsim/IsaacLab
 # env -u CONDA_PREFIX PYTHONEXE=./.venv/bin/python ./_isaac_sim/python.sh \
 #     <ws>/isaac/play_keyboard.py --checkpoint <ckpt> --num_envs 1 --visualizer newton_gl
 #
-# 键盘（查看器窗口必须在前台）:
-#   UP / DOWN  — 前进 / 停止
-#   LEFT / RIGHT — 左转 / 右转
-#   释放自动停止
+# 键盘（查看器窗口必须在前台，可叠加）:
+#   W / S   — 前进 / 后退
+#   A / D   — 左转 / 右转
+#   Z / X   — 蹲下 / 站高；C — 中间高度
+#   R       — 手动复位全部环境（演示倒下→起身）
+#   释放行走键自动停止
 
 set -euo pipefail
 
@@ -35,7 +37,7 @@ cd "$ISAACLAB"
 env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV \
     PYTHONEXE="$ISAACLAB/.venv/bin/python" \
     ./_isaac_sim/python.sh "$WS"/isaac/play_keyboard.py \
-    --task "Isaac-Velocity-Flat-Nezha" \
+    --task "${TASK:-Isaac-Velocity-Flat-Nezha}" \
     --num_envs "$NUM_ENVS" \
     --checkpoint "$CKPT" \
     --visualizer newton_gl

@@ -13,6 +13,7 @@
 4. [训练你的第一个策略](#4-训练你的第一个策略)
 5. [看训练效果（Newton Viewer）](#5-看训练效果newton-viewer)
 6. [Newton Viewer 键盘控制机器人](#6-newton-viewer-键盘控制机器人)
+   - [训练"全能"策略（行走+蹲站+起身）](#6a-训练全能策略行走蹲站起身多环境并行)
 7. [在 MuJoCo 仿真里用键盘控制](#7-在-mujoco-仿真里用键盘控制)
 8. [调优指南：策略不好怎么办](#8-调优指南策略不好怎么办)
 9. [进阶：加新能力（蹲下/起身/单边板）](#9-进阶加新能力)
@@ -264,8 +265,9 @@ cd /home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
 
 ## 6. Newton Viewer 键盘控制机器人
 
-在 Newton Viewer 里直接回放策略并用键盘驱动机器人走路——不用开 ROS2、不用三个终端，
-一个命令就是一个带键盘控制的图形窗口。
+在 Newton Viewer 里直接回放策略并用键盘全功能驱动机器人——前进/后退/转向/蹲站/复位，
+不用开 ROS2、不用三个终端，一个命令就是一个带键盘控制的图形窗口。
+支持多环境并行（`--num_envs N`，键盘命令对所有环境生效）。
 
 ### 6.1 启动
 
@@ -275,37 +277,39 @@ cd /home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
 # 自动用最新的 checkpoint
 ./isaac/play_viewer_kb.sh
 
-# 或指定 checkpoint 和环境数（推荐已验证的 2026-11-06_18-15-41/model_2998.pt）
+# 指定 checkpoint 和环境数：全能策略（行走+蹲站+起身）用 Full 任务训练的 ckpt
 ./isaac/play_viewer_kb.sh \
-    /home/yangg/data/isaacsim/IsaacLab/logs/rsl_rl/nezha_flat/2026-11-06_18-15-41/model_2998.pt 1
+    /home/yangg/data/isaacsim/IsaacLab/logs/rsl_rl/nezha_flat/<run>/model_<n>.pt 4
+
+# 16 个机器人一起走（看多样性/起身率）
+./isaac/play_viewer_kb.sh <ckpt> 16
+
+# Full 任务训练的 checkpoint 要配 Full 任务环境（TASK 环境变量，默认 Flat）：
+TASK=Isaac-Velocity-Flat-Nezha-Full ./isaac/play_viewer_kb.sh <ckpt> 4
 ```
 
-**第二个参数**是并行环境数。想看 16 个机器人一起走就填 16，键盘命令对所有环境生效。
-
+> **checkpoint 与任务要匹配**：37 维观测布局相同，不同任务的 checkpoint 物理上能加载，
+> 但行为按训练分布走。Full 任务 checkpoint 用 `TASK=Isaac-Velocity-Flat-Nezha-Full`。
+>
 > **checkpoint 选择很关键**：`ls -t` 找到的"最新"不一定是走得最好的。
-> 训练中途切换任务（如加入起身训练）可能让速度策略退化。
 > 挑 checkpoint 先用 `isaac/eval_policy.py --visualizer none` 量化验证，再拿来 Viewer 回放。
-> 已验证可用的：`2026-11-06_18-15-41/model_2998.pt`（vx 误差 0.084 m/s，20 s 不摔）。
 
 ### 6.2 键盘操作
 
 **查看器窗口必须在前台**（点一下窗口标题栏）。首次启动约 2-3 分钟（加载 USD + mesh），
 终端出现 `[kb] viewer 已绑定: NewtonViewerGL` 说明键盘通道接好了。
+所有按键可叠加（如 W+D 前进右转、W+Z 边走边蹲）。
 
 | 按键 | 功能 | 说明 |
 |---|---|---|
-| `I`（按住） | 前进（1.0 m/s） | 释放即停 |
-| `J`（按住） | 左转（−0.5 rad/s） | |
-| `L`（按住） | 右转（+0.5 rad/s） | |
-| `I` + `L` | 边走边右转 | 命令可叠加 |
-| `K` | 停止（命令清零） | 不按任何键也是停止 |
+| `W`（按住） | 前进（+1.0 m/s） | 释放即停 |
+| `S`（按住） | 后退（−1.0 m/s） | |
+| `A` / `D`（按住） | 左转 / 右转（±0.5 rad/s） | |
+| `Z`（按住） | 蹲下（目标 0.45 m） | 高度以 0.25 m/s 缓动，松开保持 |
+| `X`（按住） | 站高（目标 0.85 m） | |
+| `C` | 回中间高度（0.70 m） | |
+| `R` | 手动复位全部环境 | 演示"倒下→起身"循环：复位后全能策略会自己爬起来 |
 | 关闭窗口 / Ctrl+C | 退出 | |
-
-| 按键 | 实测表现（model_2998.pt） |
-|---|---|
-| 站立（不按键） | z≈0.72 m 稳定，漂移 ±0.01 m/s |
-| `I` | vx 跟踪 0.97–1.04 m/s |
-| `I`+`L` | vx≈1.0 m/s 同时转向 |
 
 ### 6.3 终端遥测
 
@@ -313,27 +317,32 @@ cd /home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
 
 ```
 [kb] viewer 已绑定: NewtonViewerGL
-[t=  2.0s] step=100 cmd=(0.00,+0.00) vx=+0.03 z=0.720 h_cmd=0.70
-[t=  2.0s] step=16300 cmd=(1.00,+0.00) vx=+0.98 z=0.714 h_cmd=0.70
+[t=  2.0s] step=100 cmd=(+0.00,+0.00) vx=+0.03 z=0.720 h_cmd=0.70 fallen=0/4
+[t=  2.0s] step=16300 cmd=(+1.00,+0.00) vx=+0.98 z=0.714 h_cmd=0.70 fallen=0/4
 ```
 
 | 字段 | 含义 |
 |---|---|
 | `cmd=(vx, wz)` | 当前键盘指令 |
 | `vx` | 机器人实际前进速度 (m/s)——与 cmd 前半接近 = 跟踪正常 |
-| `z` | 机身高度 (m)——稳定在 0.70–0.73 = 没摔 |
-| `h_cmd` | 高度指令（回放时固定 0.70，防止每 10 s 随机蹲起） |
+| `z` | 1 号环境机身高度 (m) |
+| `h_cmd` | 当前高度指令（Z/X/C 改变它） |
+| `fallen` | 蹲得极低（z<0.35 m，多半是倒了）的环境数/总数 |
 
-### 6.4 修改速度/转向大小
+### 6.4 修改速度/转向/高度
 
 编辑 `isaac/play_keyboard.py` 里 `KeyboardCommand.poll()`：
 
 ```python
 if self._viewer.is_key_down(self._key_forward):
-    fwd = 1.0        # 改这里：最大前进速度 (m/s)
+    fwd += 1.0        # 改这里：最大前进速度 (m/s)
 if self._viewer.is_key_down(self._key_turn_left):
-    turn -= 0.5      # 改这里：左转角速度 (rad/s)
+    turn -= 0.5       # 改这里：左转角速度 (rad/s)
+if self._viewer.is_key_down(self._key_crouch):
+    self.height[:, 0] = 0.45   # 改这里：蹲下目标高度
 ```
+
+高度缓动速率在主循环里：`_rate = 0.25  # m/s`。
 
 ### 6.5 常见问题
 
@@ -341,8 +350,9 @@ if self._viewer.is_key_down(self._key_turn_left):
 |---|---|---|
 | 按键没反应 | 窗口不在前台 | 点一下 Newton Viewer 窗口再按 |
 | 按键没反应、也没绑定日志 | viewer 还没创建完 | 等出现 `[kb] viewer 已绑定`（最多 3 分钟） |
-| 机器人抖动、不走 | checkpoint 不会走路（训练退化） | 换 `2026-11-06_18-15-41/model_2998.pt`，用 eval_policy 先验证 |
-| 机器人每 10 s 蹲一下 | 高度指令被随机重采样 | 正常情况不会发生（脚本已固定 0.70）；自行改代码时注意 `height_cmd[:, 0] = 0.70` 这行 |
+| 机器人抖动、不走 | checkpoint 不会走路（训练退化） | 换已验证 checkpoint，用 eval_policy 先验证 |
+| 蹲下后站不起来 | checkpoint 没练过起身/低高度 | 用 Full 任务训练的 checkpoint |
+| 机器人每 10 s 蹲一下 | 高度指令被随机重采样 | 正常情况不会发生（脚本已接管高度指令） |
 | 窗口黑的 | 首次初始化慢 | 等 2-3 分钟 |
 | OOM | 显存不足 | 减小第二个参数（环境数），或关浏览器 |
 
@@ -353,8 +363,75 @@ if self._viewer.is_key_down(self._key_turn_left):
 | 物理引擎 | Newton（GPU） | MuJoCo（CPU） |
 | 终端数 | 1 个 | 3 个 |
 | 用途 | 训练效果快速回放 | 部署链路验证（与实机同构） |
-| 键盘 | I/J/K/L | W/A/S/D + Z/X 蹲站 |
-| 高度控制 | 固定 0.70 m | Z/X 可调 0.45–0.85 m |
+| 键盘 | W/S/A/D + Z/X/C + R | W/A/S/D + Z/X 蹲站 |
+| 多机器人 | 支持（`--num_envs`） | 单台 |
+| 起身演示 | R 复位后自动起身（Full ckpt） | 无 |
+
+---
+
+## 6A. 训练"全能"策略（行走+蹲站+起身，多环境并行）
+
+第 4 章的 Flat 任务和第 8 章的 GetUp 任务各管一头：Flat 会走会蹲但倒了起不来，
+GetUp 会起身但行走/高度精度退化（实测 vx 误差 0.068 → 0.42 m/s）。
+`Isaac-Velocity-Flat-Nezha-Full` 任务把两者合并成一个策略：
+
+### 6A.1 任务定义
+
+`source/isaaclab_tasks/.../nezha/full_env_cfg.py`（在 Flat 基础上）：
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| `reset_fallen` | 概率 0→0.35，8000 步升温 | 一部分回合从倒地开始，比 GetUp 更慢更温和 |
+| `nan_state` 终止 | 启用 | 数值发散直接判死，防 NaN 污染梯度 |
+| 动作限幅 | ±3.0 | 倒地时防接触求解发散 |
+| `base_contact` 终止 | 关闭 | 倒地时 base_link 本来就贴地 |
+| `track_height` | weight 1.5 / std 0.20 | 站立精度与起身梯度折中 |
+| 高度指令范围 | 0.45–0.85 | 全范围蹲站 |
+| 回合 | 20 s | 与 Flat 相同 |
+
+### 6A.2 训练（resume 自 Flat 好模型）
+
+```bash
+cd /home/yangg/data/isaacsim/IsaacLab
+export RUN="env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV PYTHONEXE=$PWD/.venv/bin/python ./_isaac_sim/python.sh"
+
+# 从会走的 checkpoint 出发，3000 iters（约 25 分钟，RTX 5060）
+$RUN scripts/reinforcement_learning/train.py \
+    --task Isaac-Velocity-Flat-Nezha-Full --rl_library rsl_rl \
+    --num_envs 2048 --visualizer none --seed 0 --max_iterations 3000 \
+    --checkpoint logs/rsl_rl/nezha_flat/<flat_run>/model_<n>.pt
+```
+
+多开机器人训练就是 `--num_envs`：2048 个环境并行采样（GPU 吞吐 ~48k steps/s），
+想更稳就加 envs 或 iters。checkpoint 存在 `logs/rsl_rl/nezha_flat/<新 run>/model_<n>.pt`。
+
+### 6A.3 评测三件套
+
+```bash
+CKPT=logs/rsl_rl/nezha_flat/<run>/model_<n>.pt
+
+# 行走+高度（Flat 任务；Full 训练的 ckpt 在 Flat 上评即可看行走精度）
+$RUN <ws>/isaac/eval_policy.py --visualizer none --num_envs 32 --steps 800 --checkpoint $CKPT
+
+# 起身（Full 任务 + 1500 步 ≈ 12.5 s；起身需要 >10 s，评短了全是 0%）
+$RUN <ws>/isaac/eval_getup.py --task Isaac-Velocity-Flat-Nezha-Full \
+    --visualizer none --num_envs 64 --steps 1500 --fall_prob 0.6 --checkpoint $CKPT
+```
+
+| 指标 | 合格线 |
+|---|---|
+| `mean \|vx - cmd\|` | < 0.15 m/s |
+| `mean \|z - h_cmd\|` | < 0.05 m |
+| `base_contact rate` | ~0% |
+| `stood_up` | > 50% |
+
+### 6A.4 回放验证
+
+```bash
+TASK=Isaac-Velocity-Flat-Nezha-Full ./isaac/play_viewer_kb.sh <ckpt> 4
+```
+
+按 R 复位 → 机器人倒地 → 观察自动起身；按 Z/X 看蹲站；按 W/S/A/D 走。
 
 ---
 
