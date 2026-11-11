@@ -27,7 +27,8 @@ class NezhaJumpTestHw90EnvCfg(NezhaJumpTestS06EnvCfg):
     def __post_init__(self):
         super().__post_init__()
         legs = self.scene.robot.actuators["legs"]
-        legs.stiffness = 1000.0
-        legs.damping = 20.0
+        # 保持训练值：高刚度只在跳跃窗口内由测试脚本按环境写入（见 jump_primitive_test.py）
+        legs.stiffness = 40.0
+        legs.damping = 2.0
         # effort_limit_sim 保持 90（nezha_s06_cfg 已对齐真机），此处显式重申
         legs.effort_limit_sim = 90.0

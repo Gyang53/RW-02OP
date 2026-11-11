@@ -22,6 +22,8 @@ parser.add_argument("--steps", type=int, default=400)
 parser.add_argument("--use_primitive", type=int, default=1, help="1=注入跳跃原语, 0=纯策略对照")
 parser.add_argument("--const_torque", type=int, default=0,
                     help="1=弹射相位用状态反馈保持恒定位置误差（≈恒定力矩），避免 PD 接近目标时自动刹车")
+parser.add_argument("--park_obstacle", type=int, default=0,
+                    help="1=把障碍物停到 100m 外（诊断：区分『障碍阻挡』与『环境本身不让走』）")
 parser.add_argument("--fixed_trigger", type=int, default=0, help="1=用固定触发距离（默认闭环：vx*(蹲下+飞行时间)）")
 parser.add_argument("--trigger_dist", type=float, default=0.6, help="障碍物距离小于该值时触发跳跃")
 parser.add_argument("--vx", type=float, default=1.0)
@@ -77,8 +79,28 @@ def main() -> int:
         return 0
     obstacle = env.unwrapped.scene["obstacle"]
 
+    if args_cli.park_obstacle:
+        dev0 = env.unwrapped.device
+        origins = env.unwrapped.scene.env_origins
+        pose = obstacle.data.default_root_state[:, :7].clone()
+        pose[:, 0] = origins[:, 0] + 100.0
+        pose[:, 1] = origins[:, 1]
+        pose[:, 2] = 0.08
+        obstacle.write_root_pose_to_sim(pose, env_ids=torch.arange(args_cli.num_envs, device=dev0))
+        print("[jump] 诊断模式：障碍物已停到 100 m 外")
+
     prim = JumpPrimitive(args_cli.num_envs, env.unwrapped.device)
     dt = env.unwrapped.step_dt
+
+    # ---- 跳跃窗口内临时提高腿 PD 刚度（关键）----
+    # JumpTestHw90 曾把 stiffness 全局设 400，结果**破坏了训练时的行走步态**
+    # （障碍停到 100 m 外仍只前进 0.34 m，且 base_z 忽高忽低）。
+    # 正确做法：正常相位保持训练值（40），只在 prim.active 的环境写 400。
+    leg_ids = torch.tensor(
+        [i for i, n in enumerate(robot.joint_names) if ("hip" in n or "knee" in n or "abad" in n)],
+        device=env.unwrapped.device, dtype=torch.long,
+    )
+    STIFF_NORMAL, STIFF_JUMP = 40.0, 400.0 
 
     n = args_cli.steps
     x0 = robot.data.root_pos_w[:, 0].clone()
@@ -125,6 +147,13 @@ def main() -> int:
             obs = obs["policy"]
         act = torch.as_tensor(policy(obs.detach().cpu().numpy()), dtype=torch.float32,
                               device=env.unwrapped.device)
+        if args_cli.use_primitive:
+            stiff = torch.where(
+                prim.active.unsqueeze(-1),
+                torch.full((args_cli.num_envs, len(leg_ids)), STIFF_JUMP, device=env.unwrapped.device),
+                torch.full((args_cli.num_envs, len(leg_ids)), STIFF_NORMAL, device=env.unwrapped.device),
+            )
+            robot.write_joint_stiffness_to_sim_index(stiffness=stiff, joint_ids=leg_ids)
         if args_cli.use_primitive and prim.active.any():
             prim_act = prim.actions()
             if args_cli.const_torque:
