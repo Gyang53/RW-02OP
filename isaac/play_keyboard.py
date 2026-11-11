@@ -209,12 +209,15 @@ def main():
             if main._t >= 2.0:
                 v = robot.data.root_lin_vel_b[0]
                 fallen = int((robot.data.root_pos_w[:, 2] < 0.35).sum().item())
+                jump_txt = ""
+                if jump_prim is not None:
+                    jump_txt = f" jump={jump_prim.phase_name()[0]}"
+                    if obs_pos is not None:
+                        jump_txt += f" obs_dx={(obs_pos[0, 0] - robot.data.root_pos_w[0, 0]).item():+.2f}"
                 print(
                     f"[t={main._t:5.1f}s] step={main._n} cmd=({command[0, 0]:+.2f},{command[0, 2]:+.2f}) "
                     f"vx={v[0]:+.2f} z={robot.data.root_pos_w[0, 2]:.3f} "
-                    f"h_cmd={height_cmd[0, 0]:.2f} fallen={fallen}/{kb.commands.shape[0]} "
-                    f"jump={jump_prim.phase_name()[0] if jump_prim is not None else '-'} "
-                    f"obs_dx={(obs_pos[0, 0] - robot.data.root_pos_w[0, 0]).item():+.2f}" if obs_pos is not None else "",
+                    f"h_cmd={height_cmd[0, 0]:.2f} fallen={fallen}/{kb.commands.shape[0]}{jump_txt}",
                     flush=True,
                 )
                 main._t = 0.0

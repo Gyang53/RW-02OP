@@ -889,6 +889,48 @@ knee > −0.86 时出现 NaN，best_hip 卡在边界 −1.00，腿长读数无�
 3. 把该轨迹按时间采样成动作序列喂给 Isaac（不依赖 Isaac 侧标定）。
 4. 重跑 `diag_leg_extension` 验证抬升，再重跑跳跃/起身。
 
+### 6B.5d Newton Viewer 功能演示记录（实测，2026-11-11）
+
+命令模板（每个演示一个窗口）：
+
+```bash
+cd /home/yangg/data/isaacsim/IsaacLab
+RUN="env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV PYTHONEXE=$PWD/.venv/bin/python ./_isaac_sim/python.sh"
+WS=/home/yangg/data/model_sim/RW-02OP/RW-02OP_OpenWBipedController
+
+# A) 行走 / 蹲站（无障碍）
+$RUN $WS/isaac/play_keyboard.py --task Isaac-Velocity-Flat-Nezha-S06 --num_envs 4 \
+  --checkpoint logs/rsl_rl/nezha_flat/2026-11-11_14-33-09/model_8748.pt \
+  --visualizer newton_gl --h_crouch 0.35 --h_stand 0.60 --h_mid 0.50
+
+# B) 跳跃（障碍固定 0.12 m）+ 原语
+$RUN $WS/isaac/play_keyboard.py --task Isaac-Velocity-Flat-Nezha-S06-JumpTest --num_envs 4 \
+  --checkpoint logs/rsl_rl/nezha_flat/2026-11-11_14-33-09/model_8748.pt \
+  --visualizer newton_gl --jump --jump_dist 0.5
+
+# C) 倒地/起身（50% 倒地起步）
+$RUN $WS/isaac/play_keyboard.py --task Isaac-Velocity-Flat-Nezha-S06-GetUpTest --num_envs 8 \
+  --checkpoint logs/rsl_rl/nezha_flat/2026-11-11_15-20-44/model_11100.pt \
+  --visualizer newton_gl
+```
+
+**实测结果（窗口在前台、按键有效）**：
+
+| 功能 | 按键 | 遥测 | 结论 |
+|---|---|---|---|
+| 前进 | `W` | cmd +1.00 → **vx 0.97~0.99** | ✅ 精确跟踪 |
+| 后退 | `S` | cmd −1.00 → **vx −0.86** | ✅ |
+| 左/右转 | `A`/`D` | cmd ±0.50（yaw） | ✅ 指令生效 |
+| 蹲下 | `Z` | h_cmd 0.35 → **z 0.37~0.42** | ✅ |
+| 站高 | `X` | h_cmd 0.60 → **z 0.598** | ✅ |
+| 中间高度 | `C` | h_cmd 0.50 → **z 0.52** | ✅ |
+| 跳跃 | 自动（`--jump`） | 相位 `crouch→extend→tuck` 实测触发；tuck 时 **vx 1.83 m/s** | ⚠️ 弹射有、越障无（落地被弹回） |
+| 复位 | `R` | 环境复位（S06 任务无倒地样本） | ✅ |
+| **倒地起身** | — | V5 任务：fallen **2/8 持续 8 s 不变** | ❌ **站不起来** |
+
+**同时修复的演示脚本 bug**：`play_keyboard.py` 的遥测行在未启用 `--jump` 时整行打印为空
+（条件表达式被错误地套在整条拼接字符串上），已改为按需拼接 `jump_txt`。
+
 ### 6B.6 起身为什么仍 0%（分析与下一步）
 
 - v5 已按 v1 文档的成功配方：倒地姿态只用"伸腿 knee=+0.663 + abad=−0.32"、宽限 10 s。
