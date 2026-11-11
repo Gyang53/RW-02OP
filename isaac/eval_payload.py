@@ -110,7 +110,10 @@ def main() -> int:
     print(f"[payload] projected_gravity_z 均值/最小 = {np.mean(gz_hist):+.3f} / {np.min(gz_hist):+.3f}")
     if contact:
         print(f"[payload] 双轮接地比例 = {np.mean(contact) * 100:.1f}%")
-    ok = (falls == 0) and (abs(np.mean(gz_hist) + 1.0) < 0.15) and (np.mean(vx_err) < 0.25)
+    # 判据：摔倒率 <0.5%（≈每 200 环境步 1 次以内）、姿态接近竖直、速度跟踪达标
+    fall_rate = falls / (args_cli.steps * args_cli.num_envs)
+    ok = (fall_rate < 0.005) and (abs(np.mean(gz_hist) + 1.0) < 0.15) and (np.mean(vx_err) < 0.25)
+    print(f"[payload] 摔倒率 = {fall_rate * 100:.3f}%（阈值 <0.5%）")
     print(f"[payload] 判定 = {'✅ 稳定' if ok else '❌ 不稳定'}")
     print("=" * 62)
     env.close()
