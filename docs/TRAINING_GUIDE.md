@@ -1686,6 +1686,22 @@ Isaac Lab 侧共注册 13 个任务，按用途分类：
 软件侧能做的：发射触发时序、空中姿态控制、落地缓冲控制、载荷自适应（已具备）。
 机械侧是硬前提，需要结构设计 + 弹簧选型 + 强度校核。
 
+### D.5 演示：G 键发射（软件模拟，机械未就位时可用）
+
+`play_keyboard.py --launch` 增加发射键（G）：按下即直接给根速度 3.43 m/s（等价于发射机构做功），
+配合 `nezha_s06_launch.pt`（落地已训练）即可在 Newton Viewer 里完整演示 0.6 m 跳跃。
+
+```bash
+./isaac/demo_all.sh D        # 或：
+$RUN $WS/isaac/play_keyboard.py --task Isaac-Velocity-Flat-Nezha-S06-Launch --num_envs 4 \
+  --checkpoint $ISAACLAB/logs/rsl_rl/nezha_flat/2026-11-11_17-53-53/model_9350.pt \
+  --visualizer newton_gl --launch
+```
+
+实测（viewer 内，4 环境）：按 G 后 z 由 **0.50 → 1.011（采样值，实际峰值 1.078）**，
+落地后 `fallen=0/4`，可继续行走。
+等真实发射机构就位后，只需把"直接写根速度"替换成"触发发射机构"，其余逻辑不变。
+
 ### D.4 ✅ 落地训练成功：0.6 m + 10 kg 全链路通过（0 摔倒）
 
 新增任务 `Isaac-Velocity-Flat-Nezha-S06-Launch`（`flat_env_s06_launch_cfg.py` + `mdp/launch.py`）：

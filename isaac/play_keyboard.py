@@ -10,7 +10,8 @@
 #   Z / X   — 蹲下 0.45 m / 站高 0.85 m（按住到目标，松开保持）
 #   C       — 回到中间高度 0.70 m
 #   R       — 手动复位全部环境（配合起身策略演示"倒下→站起"）
-#   --jump  — 障碍临近自动蹲跳越障（需要 TASK=...-S06-V4 场景，含障碍物）
+#   --jump  — 障碍临近自动蹲跳越障（需要含障碍物的场景）
+#   --launch — G 键模拟发射机构（软件给竖直初速，用于演示 0.6 m 跳跃与落地）
 #   释放行走键自动停止
 
 from __future__ import annotations
@@ -29,6 +30,10 @@ parser.add_argument("--h_stand", type=float, default=0.85, help="X 键站高目�
 parser.add_argument("--h_mid", type=float, default=0.70, help="C 键中间高度 (m)")
 parser.add_argument("--jump", action="store_true", help="障碍临近时自动执行蹲跳原语")
 parser.add_argument("--jump_dist", type=float, default=0.6, help="触发跳跃的障碍距离 (m)")
+parser.add_argument("--launch", action="store_true",
+                    help="启用 G 键发射（软件模拟发射机构：直接给竖直初速，用于机械未就位时演示 0.6 m 跳跃）")
+parser.add_argument("--launch_vz", type=float, default=3.43,
+                    help="发射初速 m/s（3.43 ≈ 0.6 m 跳跃高度）")
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -76,6 +81,7 @@ class KeyboardCommand:
         self._key_stand = pyglet.window.key.X
         self._key_mid = pyglet.window.key.C
         self._key_reset = pyglet.window.key.R
+        self._key_launch = pyglet.window.key.G
 
     def set_viewer(self, viewer):
         """viewer 是 NewtonViewerGL，有 is_key_down(symbol)->bool。"""
@@ -106,6 +112,8 @@ class KeyboardCommand:
         elif self._viewer.is_key_down(self._key_mid):
             self.height[:, 0] = self._h_mid
         self.reset_requested = self._viewer.is_key_down(self._key_reset)
+        self.launch_requested = self._viewer.is_key_down(getattr(self, "_key_launch", None)) \
+            if getattr(self, "_key_launch", None) else False
 
 
 def main():
@@ -232,6 +240,18 @@ def main():
                 jump_prim.advance(dt)
                 if jump_prim.active.any():
                     actions = torch.where(jump_prim.active.unsqueeze(-1), jump_prim.actions(), actions)
+            # G 键：模拟发射机构（直接给竖直初速），验证 0.6 m 跳跃 + 落地
+            if args_cli.launch and kb.launch_requested and not getattr(main, "_launch_latch", False):
+                vel = robot.data.root_lin_vel_w.clone()
+                vel6 = torch.zeros((args_cli.num_envs, 6), device=env.unwrapped.device)
+                vel6[:, 0] = vel[:, 0]
+                vel6[:, 2] = args_cli.launch_vz
+                robot.write_root_velocity_to_sim(vel6)
+                main._launch_latch = True
+                print(f"[launch] 发射！vz={args_cli.launch_vz:.2f} m/s "
+                      f"(≈{args_cli.launch_vz**2/(2*9.81):.2f} m 跳跃高度)", flush=True)
+            elif not (args_cli.launch and kb.launch_requested):
+                main._launch_latch = False
             result = env.step(actions)
             obs = result[0]
             if isinstance(obs, dict):

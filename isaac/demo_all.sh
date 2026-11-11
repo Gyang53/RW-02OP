@@ -6,6 +6,7 @@
 #   ./isaac/demo_all.sh A               # 只跑 A：行走 + 蹲站
 #   ./isaac/demo_all.sh B               # 只跑 B：跳跃（0.12 m 障碍）
 #   ./isaac/demo_all.sh C               # 只跑 C：倒地 / 起身
+#   ./isaac/demo_all.sh D               # 只跑 D：发射式跳跃（G 键）
 #
 # 演示时的操作（Newton Viewer 窗口必须在前台，点一下窗口再按键）:
 #   W/S      前进 / 后退
@@ -26,6 +27,7 @@ WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 WALK_CKPT=${WALK_CKPT:-$ISAACLAB/logs/rsl_rl/nezha_flat/2026-11-11_14-33-09/model_8748.pt}
 GETUP_CKPT=${GETUP_CKPT:-$ISAACLAB/logs/rsl_rl/nezha_flat/2026-11-11_15-20-44/model_11100.pt}
+LAUNCH_CKPT=${LAUNCH_CKPT:-$ISAACLAB/logs/rsl_rl/nezha_flat/2026-11-11_17-53-53/model_9350.pt}
 
 run() {
     cd "$ISAACLAB"
@@ -59,10 +61,20 @@ segment_C() {
         --h_crouch 0.35 --h_stand 0.60 --h_mid 0.50
 }
 
+segment_D() {
+    echo "== D) 发射式跳跃（G 键 = 模拟发射机构，0.6 m 高度，含 10 kg 载荷）=="
+    echo "   按键: G 发射 · W/S/A/D 行走 · Z/X/C 蹲站 · R 复位"
+    echo "   看点: 按下 G 后 z 由 ~0.50 升到 ~1.08（抬升 0.59 m），落地 fallen=0"
+    run --task Isaac-Velocity-Flat-Nezha-S06-Launch --num_envs 4 \
+        --checkpoint "$LAUNCH_CKPT" --visualizer newton_gl \
+        --launch --h_crouch 0.35 --h_stand 0.60 --h_mid 0.50
+}
+
 case "${1:-ALL}" in
     A) segment_A ;;
     B) segment_B ;;
     C) segment_C ;;
+    D) segment_D ;;
     ALL)
         segment_A
         echo; read -r -p "A 段结束，回车继续 B 段（Ctrl+C 退出）..." _
@@ -70,5 +82,5 @@ case "${1:-ALL}" in
         echo; read -r -p "B 段结束，回车继续 C 段（Ctrl+C 退出）..." _
         segment_C
         ;;
-    *) echo "用法: $0 [A|B|C|ALL]" >&2; exit 1 ;;
+    *) echo "用法: $0 [A|B|C|D|ALL]" >&2; exit 1 ;;
 esac
