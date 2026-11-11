@@ -49,13 +49,20 @@ class NezhaGetUpS06V5EnvCfg(NezhaJumpS06V4EnvCfg):
         )
 
         # ---- 起身奖励：高度跟踪加大权重、放宽容差 ----
+        # v1 文档的成功配方：std 必须放大 —— 倒地时 z≈0.2、目标 0.60，
+        # std=0.25 时 exp(-(0.4/0.25)^2)=0.077 仍偏小；0.45 时 ≈0.45，梯度可用。
         self.rewards.track_height.weight = 2.0
-        self.rewards.track_height.params["std"] = 0.25
+        self.rewards.track_height.params["std"] = 0.45
         # 越障相关奖励在小场景里没有意义，关掉以免噪声
         self.rewards.jump_takeoff.weight = 0.0
         self.rewards.obstacle_cleared.weight = 0.0
         self.rewards.crouch_approach.weight = 0.0
         self.rewards.air_retract.weight = 0.0
+        # 起身稠密奖励：低姿态下的上升速度 + 腿伸展（给探索连续梯度）
+        from .mdp import wheel_rewards as wr
+        self.rewards.getup_lift = RewTerm(func=wr.getup_lift_reward, weight=3.0,
+                                         params={"z_low": 0.45, "knee_ext": 0.3})
+
         # 倒地回合没有轮子接地，腿静止/abad 惩罚已被行走窗口门控，无需改
 
         # 起身回合给更长宽限（从倒地到站起需要 >3 s，v1 文档记录 10 s 量级）

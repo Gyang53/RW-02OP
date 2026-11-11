@@ -220,3 +220,20 @@ def crouch_before_obstacle(env: ManagerBasedRLEnv, dist: float = 1.0) -> torch.T
     z = _t(robot.data.root_pos_w)[:, 2]
     low = torch.exp(-((z - 0.38).clamp(min=0.0) ** 2) / 0.01)
     return low * _obstacle_ahead(env, dist).float()
+
+
+def getup_lift_reward(env: ManagerBasedRLEnv, z_low: float = 0.45, knee_ext: float = 0.3) -> torch.Tensor:
+    """起身稠密奖励：机身低（z<z_low）时奖励向上的质心速度，并奖励腿伸展。
+
+    为什么需要：v1 文档记录起身"纯靠高度跟踪奖励"在 z≈0.2 时 exp 梯度几乎消失，
+    1500 iters 不起身；补一条「低姿态下的上升速度」可以给探索提供连续梯度。
+    """
+    robot = env.scene["robot"]
+    idx = _joint_idx(env)
+    z = _t(robot.data.root_pos_w)[:, 2]
+    vz = _t(robot.data.root_lin_vel_w)[:, 2]
+    low = (z < z_low).float()
+    lift = vz.clamp(min=0.0, max=1.5) / 1.5
+    knee = _t(robot.data.joint_pos)[:, idx["knee"]].mean(dim=1)
+    ext = ((knee - knee_ext) / 0.5).clamp(min=0.0, max=1.0)
+    return low * (0.7 * lift + 0.3 * ext)
