@@ -130,14 +130,18 @@ def main() -> int:
         hcmd[:, 0] = 0.50
 
         # 障碍距离 → 触发原语
-        dx = (obstacle.data.root_pos_w[:, 0] - robot.data.root_pos_w[:, 0]).abs()
+        # 带符号距离：正 = 障碍在前方。必须要求前方，否则背对时也会触发
+        dx_signed = obstacle.data.root_pos_w[:, 0] - robot.data.root_pos_w[:, 0]
+        dx = dx_signed.abs()
         # 闭环触发距离（可用 --fixed_trigger 回到固定值做对照）
         if args_cli.fixed_trigger:
             d_trig = torch.full_like(dx, args_cli.trigger_dist)
         else:
             vx_now = robot.data.root_lin_vel_b[:, 0].abs()
             d_trig = prim.trigger_distance(vx_now)
-        near = (dx < d_trig) & (dx > -0.2)
+        vx_now_ = robot.data.root_lin_vel_b[:, 0]
+        # 触发条件：障碍在前方、距离进入触发区、且在前进（避免原地/后退时起跳）
+        near = (dx_signed > 0.0) & (dx < d_trig) & (vx_now_ > 0.3)
         before = prim.active.clone()
         prim.trigger(near & ~crossed)
         triggered = triggered | (prim.active & ~before).cpu().numpy()

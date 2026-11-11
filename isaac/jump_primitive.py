@@ -72,7 +72,8 @@ class JumpPrimitive:
     """
 
     def __init__(self, num_envs: int, device: str | torch.device, timing: JumpTiming | None = None,
-                 knee_crouch: float = KNEE_CROUCH, knee_tuck: float = KNEE_TUCK):
+                 knee_crouch: float = KNEE_CROUCH, knee_tuck: float = KNEE_TUCK,
+                 cooldown_s: float = 1.5):
         self.n = num_envs
         self.device = device
         self.t = timing or JumpTiming()
@@ -80,6 +81,10 @@ class JumpPrimitive:
         self.knee_tuck = knee_tuck
         self._clock = torch.full((num_envs,), -1.0, device=device)  # <0 表示空闲
         self._active = torch.zeros(num_envs, dtype=torch.bool, device=device)
+        # 冷却：一次跳跃结束后 cooldown_s 内不再触发，避免"反复起跳打断行驶"
+        # （实测频繁触发时 8 s 只前进 0.80 m，正常应 ~7 m）
+        self.cooldown_s = cooldown_s
+        self._cooldown = torch.zeros(num_envs, device=device)
 
     # ---- 状态
     @property
@@ -87,9 +92,9 @@ class JumpPrimitive:
         return self._active
 
     def trigger(self, mask: torch.Tensor) -> None:
-        """把 mask 里为 True 且当前空闲的环境启动跳跃（计时从 0 开始）。"""
-        idle = self._clock < 0
-        start = mask & idle
+        """把 mask 里为 True、当前空闲且不在冷却期的环境启动跳跃。"""
+        ready = (self._clock < 0) & (self._cooldown <= 0)
+        start = mask & ready
         self._clock = torch.where(start, torch.zeros_like(self._clock), self._clock)
         self._active = self._clock >= 0
 
@@ -101,12 +106,13 @@ class JumpPrimitive:
         self._active = self._clock >= 0
 
     def advance(self, dt: float) -> None:
-        """每个环境步推进一次；超时自动退出。"""
-        self._clock = torch.where(
-            self._clock >= 0, self._clock + dt, self._clock
-        )
+        """每个环境步推进一次；结束的环境进入冷却期。"""
+        self._clock = torch.where(self._clock >= 0, self._clock + dt, self._clock)
         done = self._clock > self.t.total
         self._clock = torch.where(done, torch.full_like(self._clock, -1.0), self._clock)
+        # 刚结束 → 开始冷却
+        self._cooldown = torch.where(done, torch.full_like(self._cooldown, self.cooldown_s), self._cooldown)
+        self._cooldown = (self._cooldown - dt).clamp(min=0.0)
         self._active = self._clock >= 0
 
     # ---- 动作
