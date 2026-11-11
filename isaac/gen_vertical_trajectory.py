@@ -18,8 +18,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-MODEL = "assets/nezha/models/nezhav1/mjcf/mjmodel_s06.xml"
-OUT = Path("isaac/vertical_traj.json")
+import argparse as _ap
+_ap_p = _ap.ArgumentParser()
+_ap_p.add_argument("--model", default="assets/nezha/models/nezhav1/mjcf/mjmodel_s06.xml")
+_ap_p.add_argument("--out", default="isaac/vertical_traj.json")
+_ap_args = _ap_p.parse_args()
+MODEL = _ap_args.model
+OUT = Path(_ap_args.out)
 WHEEL_R = 0.127
 
 m = mujoco.MjModel.from_xml_path(MODEL)
