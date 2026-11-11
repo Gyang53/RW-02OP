@@ -37,6 +37,10 @@
 
   <worldbody>
     
+    <geom name="floor" rgba="0.5 0.6 0.7 1" pos="0 0 0" size="0 0 0.25" type="plane" material="matplane" condim="3" />
+    <camera name="track" mode="trackcom" pos="0 -2.3 1.6" xyaxes="1 0 0 0 0.707 0.707" />
+    <light directional="true" diffuse=".8 .8 .8" pos="0 0 10" dir="0 0 -10" />
+
     <body name="base_link" pos="0 0 0.602">
       <inertial pos="-0.0777338 2.37093e-05 0.0446648" quat="0.943737 -0.00530883 -0.330632 0.00393358" mass="9.921" diaginertia="0.144009 0.115319 0.0829887" />
       <joint type="free" limited="false" actuatorfrclimited="false" />
@@ -109,7 +113,19 @@
 
     
     
-    </worldbody>
+    <body name="slope" pos="4 -1.5 0.3">
+        <geom type="box" size="1.5 1.5 0.02" pos="-0.485 0.0 0.0" euler="0 -0.2 0.0" rgba="0.8 0.6 0.4 1" />
+        
+    </body>
+
+    
+    <body name="base_Estimate" pos="0 0 0.91">
+        
+        <geom class="visual" type="sphere" size="0.03" rgba="0.5 0.5 0 1" />
+        
+        <joint type="free" />
+    </body>
+  </worldbody>
   
 
   <actuator>

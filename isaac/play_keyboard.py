@@ -10,6 +10,7 @@
 #   Z / X   — 蹲下 0.45 m / 站高 0.85 m（按住到目标，松开保持）
 #   C       — 回到中间高度 0.70 m
 #   R       — 手动复位全部环境（配合起身策略演示"倒下→站起"）
+#   --jump  — 障碍临近自动蹲跳越障（需要 TASK=...-S06-V4 场景，含障碍物）
 #   释放行走键自动停止
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ parser.add_argument("--checkpoint", required=True)
 parser.add_argument("--h_crouch", type=float, default=0.45, help="Z 键蹲下目标高度 (m)")
 parser.add_argument("--h_stand", type=float, default=0.85, help="X 键站高目标高度 (m)")
 parser.add_argument("--h_mid", type=float, default=0.70, help="C 键中间高度 (m)")
+parser.add_argument("--jump", action="store_true", help="障碍临近时自动执行蹲跳原语")
+parser.add_argument("--jump_dist", type=float, default=0.6, help="触发跳跃的障碍距离 (m)")
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -36,6 +39,8 @@ import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
 
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
+
+from jump_primitive import JumpPrimitive  # noqa: E402
 
 
 # 键盘命令 → 观测写入
@@ -141,6 +146,18 @@ def main():
 
         sim_ctx = SimulationContext.instance()
 
+    # 跳跃原语（可选）：需要场景里有 obstacle
+    jump_prim = None
+    obs_pos = None
+    if args_cli.jump:
+        if "obstacle" in env.unwrapped.scene.keys():
+            jump_prim = JumpPrimitive(args_cli.num_envs, env.unwrapped.device)
+            obs_pos = env.unwrapped.scene["obstacle"].data.root_pos_w
+            print("[jump] 跳跃原语已启用，触发距离 "
+                  f"{args_cli.jump_dist:.2f} m（蹲 0.30s → 饱和弹射 0.16s → 收腿 0.22s）")
+        else:
+            print("[jump] 场景没有 obstacle，跳跃原语不可用（需要 TASK=...-S06-V4）")
+
     kb = KeyboardCommand(
         args_cli.num_envs,
         env.unwrapped.device,
@@ -195,7 +212,9 @@ def main():
                 print(
                     f"[t={main._t:5.1f}s] step={main._n} cmd=({command[0, 0]:+.2f},{command[0, 2]:+.2f}) "
                     f"vx={v[0]:+.2f} z={robot.data.root_pos_w[0, 2]:.3f} "
-                    f"h_cmd={height_cmd[0, 0]:.2f} fallen={fallen}/{kb.commands.shape[0]}",
+                    f"h_cmd={height_cmd[0, 0]:.2f} fallen={fallen}/{kb.commands.shape[0]} "
+                    f"jump={jump_prim.phase_name()[0] if jump_prim is not None else '-'} "
+                    f"obs_dx={(obs_pos[0, 0] - robot.data.root_pos_w[0, 0]).item():+.2f}" if obs_pos is not None else "",
                     flush=True,
                 )
                 main._t = 0.0
@@ -203,6 +222,13 @@ def main():
                 obs = obs["policy"]
             obs_np = obs.detach().cpu().numpy()
             actions = torch.as_tensor(policy(obs_np), dtype=torch.float32, device=env.unwrapped.device)
+            # 障碍临近 → 用跳跃原语覆盖动作（蹲下 → 饱和力矩弹射 → 收腿）
+            if jump_prim is not None:
+                dx = (obs_pos[:, 0] - robot.data.root_pos_w[:, 0]).abs()
+                jump_prim.trigger(dx < args_cli.jump_dist)
+                jump_prim.advance(dt)
+                if jump_prim.active.any():
+                    actions = torch.where(jump_prim.active.unsqueeze(-1), jump_prim.actions(), actions)
             result = env.step(actions)
             obs = result[0]
             if isinstance(obs, dict):
