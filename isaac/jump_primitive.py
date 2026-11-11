@@ -159,6 +159,19 @@ class JumpPrimitive:
         a[tuck, 4] = HIP_RIDE / LEG_SCALE
         return a
 
+    def trigger_distance(self, vx, vz_takeoff: float = 1.0) -> torch.Tensor:
+        """闭环触发距离：vx * (蹲下时长 + 飞行时间)。
+
+        飞行时间 T ≈ 2*vz/g（vz=1.0 → 0.20 s）。
+        必须在蹲下**之前**触发，所以加上 crouch 相位时长：
+        以 vx=1.0 为例 → d = 1.0 * (0.30 + 0.20) = 0.50 m。
+        固定 0.9 m 会起跳过早、落在障碍前（实测 8 s 只前进 0.42 m 就被顶住）。
+        """
+        g = 9.81
+        t_flight = 2.0 * vz_takeoff / g
+        d = torch.as_tensor(vx, device=self.device, dtype=torch.float32) * (self.t.crouch + t_flight)
+        return d.clamp(min=0.15, max=1.2)
+
     def phase_name(self) -> list[str]:
         """调试用：每个环境当前相位名。"""
         names = []

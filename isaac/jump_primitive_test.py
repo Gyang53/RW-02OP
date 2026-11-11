@@ -22,6 +22,7 @@ parser.add_argument("--steps", type=int, default=400)
 parser.add_argument("--use_primitive", type=int, default=1, help="1=注入跳跃原语, 0=纯策略对照")
 parser.add_argument("--const_torque", type=int, default=0,
                     help="1=弹射相位用状态反馈保持恒定位置误差（≈恒定力矩），避免 PD 接近目标时自动刹车")
+parser.add_argument("--fixed_trigger", type=int, default=0, help="1=用固定触发距离（默认闭环：vx*(蹲下+飞行时间)）")
 parser.add_argument("--trigger_dist", type=float, default=0.6, help="障碍物距离小于该值时触发跳跃")
 parser.add_argument("--vx", type=float, default=1.0)
 args_cli = parser.parse_args()
@@ -108,7 +109,13 @@ def main() -> int:
 
         # 障碍距离 → 触发原语
         dx = (obstacle.data.root_pos_w[:, 0] - robot.data.root_pos_w[:, 0]).abs()
-        near = (dx < args_cli.trigger_dist) & (dx > -0.2)
+        # 闭环触发距离（可用 --fixed_trigger 回到固定值做对照）
+        if args_cli.fixed_trigger:
+            d_trig = torch.full_like(dx, args_cli.trigger_dist)
+        else:
+            vx_now = robot.data.root_lin_vel_b[:, 0].abs()
+            d_trig = prim.trigger_distance(vx_now)
+        near = (dx < d_trig) & (dx > -0.2)
         before = prim.active.clone()
         prim.trigger(near & ~crossed)
         triggered = triggered | (prim.active & ~before).cpu().numpy()
