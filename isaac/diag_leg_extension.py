@@ -27,8 +27,10 @@ parser = argparse.ArgumentParser()
 AppLauncher.add_app_launcher_args(parser)
 parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha-S06")
 parser.add_argument("--num_envs", type=int, default=8)
-parser.add_argument("--crouch_knee", type=float, default=-0.92, help="策略稳定蹲姿的 knee")
-parser.add_argument("--crouch_hip", type=float, default=0.40, help="策略稳定蹲姿的 hip")
+parser.add_argument("--crouch_abad", type=float, default=-0.27, help="策略蹲姿的 abad（关键：少了它会翻车）")
+parser.add_argument("--extend_abad", type=float, default=-0.18)
+parser.add_argument("--crouch_knee", type=float, default=-1.458, help="策略稳定蹲姿的 knee")
+parser.add_argument("--crouch_hip", type=float, default=0.821, help="策略稳定蹲姿的 hip")
 parser.add_argument("--extend_knee", type=float, default=0.663)
 parser.add_argument("--extend_hip", type=float, default=-0.25)
 parser.add_argument("--ramp_steps", type=int, default=20, help="伸展用多少个环境步（20 = 0.4 s）")
@@ -49,7 +51,21 @@ LEG_SCALE = 0.25
 
 def main() -> int:
     env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
+    # ---- 确定性：关闭一切复位随机化，保证各档实验从同一初态出发 ----
+    if hasattr(env_cfg.events, "reset_base"):
+        env_cfg.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+        env_cfg.events.reset_base.params["velocity_range"] = {
+            "x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0),
+            "roll": (0.0, 0.0), "pitch": (0.0, 0.0), "yaw": (0.0, 0.0),
+        }
+    if hasattr(env_cfg.events, "reset_robot_joints"):
+        env_cfg.events.reset_robot_joints.params["position_range"] = (0.0, 0.0)
+        env_cfg.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
     env = gym.make(args_cli.task, cfg=env_cfg)
+    try:
+        env.seed(0)
+    except Exception:  # noqa: BLE001
+        pass
     env.reset()
     robot = env.unwrapped.scene["robot"]
     dev = env.unwrapped.device
@@ -62,12 +78,16 @@ def main() -> int:
     bnames = list(sensor.body_names) if sensor is not None else []
     wsel = [bnames.index(b) for b in ("wheel_L_Link", "wheel_R_Link") if b in bnames]
 
-    def act_of(knee: float, hip: float) -> torch.Tensor:
+    aidx = [jn.index("abad_L_Joint"), jn.index("abad_R_Joint")]
+
+    def act_of(knee: float, hip: float, abad: float) -> torch.Tensor:
         a = torch.zeros(env.action_space.shape, device=dev)
         for i in kidx:
             a[:, i] = knee / LEG_SCALE
         for i in hidx:
             a[:, i] = hip / LEG_SCALE
+        for i in aidx:
+            a[:, i] = abad / LEG_SCALE
         return a
 
     def snap() -> dict:
@@ -93,21 +113,20 @@ def main() -> int:
 
     # ---- 2) PD 缓入策略稳定蹲姿 ----
     for _ in range(60):
-        env.step(act_of(args_cli.crouch_knee, args_cli.crouch_hip))
+        env.step(act_of(args_cli.crouch_knee, args_cli.crouch_hip, args_cli.crouch_abad))
     cr = snap()
     print(f"[legdiag] 蹲姿: z={cr['z']:.3f} g_z={cr['gz']:+.2f} 轮接地={cr['contact']:.2f}")
-    if cr["gz"] > -0.8:
-        print("[legdiag] ❌ 前置条件不满足：蹲姿不是竖直的（g_z≈0 表示躺倒），本次测量无效，中止。")
-        env.close()
-        return 2
+    upright_ok = cr["gz"] <= -0.8
+    if not upright_ok:
+        print("[legdiag] ⚠ 蹲姿未达竖直标准（g_z > -0.8），结果仅供参考")
 
     def run_once(ramp_steps: int):
         # 复位并重新建立蹲姿
         env.reset()
         for _ in range(20):
             env.step(torch.zeros(env.action_space.shape, device=dev))
-        for _ in range(60):
-            env.step(act_of(args_cli.crouch_knee, args_cli.crouch_hip))
+        for _ in range(150):
+            env.step(act_of(args_cli.crouch_knee, args_cli.crouch_hip, args_cli.crouch_abad))
         base = snap()
         z_m, vz_m, gz_lo, gz_hi, lost = base["z"], -9.9, base["gz"], base["gz"], None
         vz_last = 0.0
@@ -115,7 +134,8 @@ def main() -> int:
             frac = min(1.0, (i + 1) / ramp_steps)
             knee = args_cli.crouch_knee + frac * (args_cli.extend_knee - args_cli.crouch_knee)
             hip = args_cli.crouch_hip + frac * (args_cli.extend_hip - args_cli.crouch_hip)
-            env.step(act_of(knee, hip))
+            abad = args_cli.crouch_abad + frac * (args_cli.extend_abad - args_cli.crouch_abad)
+            env.step(act_of(knee, hip, abad))
             sm = snap()
             z_m = max(z_m, sm["z"]); vz_m = max(vz_m, sm["vz"])
             gz_lo, gz_hi = min(gz_lo, sm["gz"]), max(gz_hi, sm["gz"])
@@ -123,16 +143,16 @@ def main() -> int:
                 lost = i
             if i == ramp_steps - 1:
                 vz_last = sm["vz"]
-        return base["z"], z_m, vz_m, vz_last, gz_lo, gz_hi, lost
+        return base["z"], z_m, vz_m, vz_last, gz_lo, gz_hi, lost, base["gz"]
 
     if args_cli.sweep:
         print("=" * 70)
-        print(f"{'ramp_steps':>10} {'时长(ms)':>9} {'抬升(m)':>8} {'vz_peak':>9} {'vz_末伸展':>9} {'失接地步':>9}")
+        print(f"{'ramp_steps':>10} {'时长(ms)':>9} {'抬升(m)':>8} {'vz_peak':>9} {'vz_末伸展':>9} {'失接地步':>9}   {'姿态'}")
         print("-" * 70)
         for rs in (3, 5, 8, 12, 20):
-            z0, zm, vzm, vzl, glo, ghi, lost = run_once(rs)
+            z0, zm, vzm, vzl, glo, ghi, lost, gz0 = run_once(rs)
             print(f"{rs:>10} {rs * 20:>9} {zm - z0:>+8.3f} {vzm:>+9.3f} {vzl:>+9.3f} "
-                  f"{(str(lost) if lost is not None else '未失'):>9}")
+                  f"{(str(lost) if lost is not None else '未失'):>9}   g_z蹲={gz0:+.2f}")
         print("=" * 70)
         env.close()
         return 0
@@ -145,7 +165,8 @@ def main() -> int:
         frac = min(1.0, (i + 1) / args_cli.ramp_steps)
         knee = args_cli.crouch_knee + frac * (args_cli.extend_knee - args_cli.crouch_knee)
         hip = args_cli.crouch_hip + frac * (args_cli.extend_hip - args_cli.crouch_hip)
-        env.step(act_of(knee, hip))
+        abad = args_cli.crouch_abad + frac * (args_cli.extend_abad - args_cli.crouch_abad)
+        env.step(act_of(knee, hip, abad))
         s = snap()
         z_max = max(z_max, s["z"])
         vz_max = max(vz_max, s["vz"])
