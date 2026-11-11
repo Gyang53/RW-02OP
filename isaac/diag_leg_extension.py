@@ -1,8 +1,15 @@
-"""隔离诊断：在 Isaac 里单看「腿伸展 → 机身抬升」，排除策略/障碍/原语干扰。
+"""腿伸展诊断（有效版）：从策略的稳定蹲姿出发，PD 平缓伸展，分离"抬升"与"姿态变化"。
 
-做法：把所有环境固定到同一个蹲姿、锁住轮子、只给腿一个饱和伸展指令，
-记录 base_z / 竖直速度 / 膝角的响应。若机身抬不起来，说明是执行器/腿模型问题；
-若正常抬起，说明问题在接触时机或障碍交互。
+历史教训（都记录在 docs/TRAINING_GUIDE 6B.5e）：
+1. 瞬移到极端蹲姿会穿地 → 被物理弹成躺姿，测到的是塌姿读数。
+2. FK 求出的"腿竖直"蹲姿（knee −1.40 → hip +0.99）会把机身顶翻（hIp +0.99 过大），
+   动力学上不可稳定站立。
+3. 因此必须用**策略实测的稳定姿态**作为起点：knee ≈ −0.92、hip ≈ +0.40（z ≈ 0.47），
+   并全程校验 projected_gravity_z < −0.8（否则中止，避免再次误测）。
+
+输出：
+- 蹲姿与伸展中的 base_z、竖直速度、projected_gravity_z（姿态）、轮接地比例
+- 抬升量 vs 姿态变化量（判断能量是否转成了机体旋转）
 
 用法：
   cd /home/yangg/data/isaacsim/IsaacLab
@@ -18,11 +25,14 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 AppLauncher.add_app_launcher_args(parser)
-parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha-S06-GetUpTest")
+parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha-S06")
 parser.add_argument("--num_envs", type=int, default=8)
-parser.add_argument("--crouch_knee", type=float, default=-1.40)
+parser.add_argument("--crouch_knee", type=float, default=-0.92, help="策略稳定蹲姿的 knee")
+parser.add_argument("--crouch_hip", type=float, default=0.40, help="策略稳定蹲姿的 hip")
 parser.add_argument("--extend_knee", type=float, default=0.663)
-parser.add_argument("--hold_steps", type=int, default=40, help="伸展保持的环境步数")
+parser.add_argument("--extend_hip", type=float, default=-0.25)
+parser.add_argument("--ramp_steps", type=int, default=20, help="伸展用多少个环境步（20 = 0.4 s）")
+parser.add_argument("--hold_steps", type=int, default=20)
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -34,26 +44,6 @@ import torch  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
 LEG_SCALE = 0.25
-
-# 竖直伸展轨迹（几何求解：让轮子始终在机身正下方）
-# knee -> hip，来自 assets 几何（S06, 腿段 x0.6）
-VERT_TABLE = [(-1.46, 0.99), (-1.20, 0.78), (-1.00, 0.65), (-0.70, 0.47),
-              (-0.40, 0.31), (0.00, 0.09), (0.30, -0.06), (0.66, -0.25)]
-
-
-def hip_for_knee(knee: float) -> float:
-    """按表线性插值：给定 knee 返回使腿竖直的 hip。"""
-    xs = [k for k, _ in VERT_TABLE]
-    ys = [h for _, h in VERT_TABLE]
-    if knee <= xs[0]:
-        return ys[0]
-    if knee >= xs[-1]:
-        return ys[-1]
-    for i in range(1, len(xs)):
-        if knee <= xs[i]:
-            t = (knee - xs[i - 1]) / (xs[i] - xs[i - 1])
-            return ys[i - 1] + t * (ys[i] - ys[i - 1])
-    return ys[-1]
 
 
 def main() -> int:
@@ -67,119 +57,78 @@ def main() -> int:
     hidx = [jn.index("hip_L_Joint"), jn.index("hip_R_Joint")]
     n = args_cli.num_envs
 
-    def set_pose(knee, hip, z):
-        q = robot.data.default_joint_pos.clone()
-        for i in kidx:
-            q[:, i] = knee
-        for i in hidx:
-            q[:, i] = hip
-        robot.write_joint_state_to_sim(q, torch.zeros_like(q))
-        pose = robot.data.default_root_state.clone()
-        pose[:, 2] = z
-        pose[:, 3:7] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=dev)
-        robot.write_root_pose_to_sim(pose[:, :7])
-        robot.write_root_velocity_to_sim(torch.zeros((n, 6), device=dev))
-
-    # 蹲姿（几何：knee=-1.40 时机身约 0.34）
-    # ⚠ 不要瞬移到蹲姿：z=0.34 + 折叠关节会穿地，被物理弹成躺姿（此前多次误判的根源）。
-    # 改为从 standing 复位出发，用 PD 把腿驱动到蹲姿（与实际原语同一路径）。
-    for _ in range(20):
-        env.step(torch.zeros(env.action_space.shape, device=dev))  # 动作 0 = 站立
-    # ⚠ 稳定阶段必须**持续命令蹲姿**：动作 0 意味着关节目标 0（站立），
-    # 会在 30 步内把蹲姿顶回去（实测膝角从 -1.40 被拉到 -0.09）。
-    crouch_act = torch.zeros(env.action_space.shape, device=dev)
-    hip_c = hip_for_knee(args_cli.crouch_knee)
-    for i in kidx:
-        crouch_act[:, i] = args_cli.crouch_knee / LEG_SCALE
-    for i in hidx:
-        crouch_act[:, i] = hip_c / LEG_SCALE
-    for _ in range(60):  # 60 步 × 20 ms = 1.2 s 缓入蹲姿
-        env.step(crouch_act)
-    z_before = robot.data.root_pos_w[:, 2].mean().item()
-    gz_before = robot.data.projected_gravity_b[:, 2].mean().item()
-    print(f"[legdiag] 蹲姿稳定后 base_z = {z_before:.3f} m, projected_gravity_z = {gz_before:+.2f}")
-    # ⚠ 硬断言：竖直站立时 projected_gravity_z ≈ -1。若接近 0，说明机器人是躺着的，
-    # 此时测到的"抬升不足"是塌姿读数，不代表腿的伸展能力（此前多次误判即源于此）。
-    if gz_before > -0.8:
-        print("[legdiag] ❌ 前置条件不满足：机器人不是竖直姿态（|g_z|≈0 表示躺倒），"
-              "本次测量无效，已中止。")
-        env.close()
-        return 2
-
-    # 饱和伸展：膝 +0.663、髋 +0.40、轮 0（锁定）
-    act = torch.zeros(env.action_space.shape, device=dev)
-
     sensor = env.unwrapped.scene.sensors.get("contact_forces")
     bnames = list(sensor.body_names) if sensor is not None else []
-    wl_i = bnames.index("wheel_L_Link") if "wheel_L_Link" in bnames else None
-    wr_i = bnames.index("wheel_R_Link") if "wheel_R_Link" in bnames else None
-    contact_hist = []
-    pitch_hist = []
-    z_max, vz_max = z_before, -9.9
-    knee_log = []
-    pen_log = []  # 轮底穿透量（负 = 穿入地面）
-    last_hip = []
-    k_from, k_to = args_cli.crouch_knee, args_cli.extend_knee
-    for step in range(args_cli.hold_steps):
-        # 线性推进 knee，并按竖直轨迹同步给 hip（关键：髋必须跟着动）
-        frac = min(1.0, (step + 1) / max(1, args_cli.hold_steps // 2))
-        knee_cmd = k_from + frac * (k_to - k_from)
-        hip_cmd = hip_for_knee(knee_cmd)
-        act[:, kidx[0]] = knee_cmd / LEG_SCALE
-        act[:, kidx[1]] = knee_cmd / LEG_SCALE
-        act[:, hidx[0]] = hip_cmd / LEG_SCALE
-        act[:, hidx[1]] = hip_cmd / LEG_SCALE
-        env.step(act)
-        z = robot.data.root_pos_w[:, 2]
-        vz = robot.data.root_lin_vel_w[:, 2]
-        z_max = max(z_max, z.mean().item())
-        vz_max = max(vz_max, vz.mean().item())
-        knee_log.append(robot.data.joint_pos[:, kidx[0]].mean().item())
-        # 轮底世界高度（近似）：轮 link 原点 - 0.127，用于判断是否压穿地面
-        jn_all = robot.joint_names
-        widx = [jn_all.index("wheel_L_Joint"), jn_all.index("wheel_R_Joint")]
-        wz = robot.data.joint_pos.new_zeros(())  # 占位避免未用变量告警
-        pen_log.append(robot.data.root_pos_w[:, 2].mean().item())
-        last_hip.append(robot.data.joint_pos[:, hidx[0]].mean().item())
-        if sensor is not None and wl_i is not None:
+    wsel = [bnames.index(b) for b in ("wheel_L_Link", "wheel_R_Link") if b in bnames]
+
+    def act_of(knee: float, hip: float) -> torch.Tensor:
+        a = torch.zeros(env.action_space.shape, device=dev)
+        for i in kidx:
+            a[:, i] = knee / LEG_SCALE
+        for i in hidx:
+            a[:, i] = hip / LEG_SCALE
+        return a
+
+    def snap() -> dict:
+        gz = robot.data.projected_gravity_b[:, 2].mean().item()
+        contact = 1.0
+        if sensor is not None and len(wsel) == 2:
             f = sensor.data.net_forces_w
             if hasattr(f, "torch"):
                 f = f.torch
-            c = (torch.linalg.norm(f[:, [wl_i, wr_i]], dim=-1) > 1.0).any(dim=1).float().mean().item()
-            contact_hist.append(c)
-        # 机身倾角（projected gravity 与竖直的夹角）
-        gz = robot.data.projected_gravity_b[:, 2].mean().item()
-        pitch_hist.append(gz)
+            contact = (torch.linalg.norm(f[:, wsel], dim=-1) > 1.0).any(dim=1).float().mean().item()
+        return {
+            "z": robot.data.root_pos_w[:, 2].mean().item(),
+            "vz": robot.data.root_lin_vel_w[:, 2].mean().item(),
+            "gz": gz,
+            "contact": contact,
+        }
 
-    print("=" * 60)
-    print(f"[legdiag] 伸展 {args_cli.hold_steps} 步（每步 {env.unwrapped.step_dt*1000:.1f} ms）")
-    print(f"[legdiag] 起始 base_z = {z_before:.3f}")
-    print(f"[legdiag] base_z 峰值 = {z_max:.3f}   抬升 = {z_max - z_before:+.3f} m")
+    # ---- 1) 站立稳定 ----
+    for _ in range(20):
+        env.step(torch.zeros(env.action_space.shape, device=dev))
+    st = snap()
+    print(f"[legdiag] 站立: z={st['z']:.3f} g_z={st['gz']:+.2f} 轮接地={st['contact']:.2f}")
+
+    # ---- 2) PD 缓入策略稳定蹲姿 ----
+    for _ in range(60):
+        env.step(act_of(args_cli.crouch_knee, args_cli.crouch_hip))
+    cr = snap()
+    print(f"[legdiag] 蹲姿: z={cr['z']:.3f} g_z={cr['gz']:+.2f} 轮接地={cr['contact']:.2f}")
+    if cr["gz"] > -0.8:
+        print("[legdiag] ❌ 前置条件不满足：蹲姿不是竖直的（g_z≈0 表示躺倒），本次测量无效，中止。")
+        env.close()
+        return 2
+
+    # ---- 3) 平缓伸展（knee/hip 同步插值）----
+    z_max, vz_max = cr["z"], -9.9
+    gz_min, gz_max = cr["gz"], cr["gz"]
+    lost_at = None
+    for i in range(args_cli.ramp_steps + args_cli.hold_steps):
+        frac = min(1.0, (i + 1) / args_cli.ramp_steps)
+        knee = args_cli.crouch_knee + frac * (args_cli.extend_knee - args_cli.crouch_knee)
+        hip = args_cli.crouch_hip + frac * (args_cli.extend_hip - args_cli.crouch_hip)
+        env.step(act_of(knee, hip))
+        s = snap()
+        z_max = max(z_max, s["z"])
+        vz_max = max(vz_max, s["vz"])
+        gz_min, gz_max = min(gz_min, s["gz"]), max(gz_max, s["gz"])
+        if lost_at is None and s["contact"] < 0.5:
+            lost_at = i
+        if i % 5 == 0 or i == args_cli.ramp_steps + args_cli.hold_steps - 1:
+            print(f"[legdiag]  step {i:2d} knee={knee:+.2f} hip={hip:+.2f} "
+                  f"z={s['z']:.3f} vz={s['vz']:+.3f} g_z={s['gz']:+.2f} 轮接地={s['contact']:.2f}")
+
+    end = snap()
+    print("=" * 66)
+    print(f"[legdiag] 抬升 = {z_max - cr['z']:+.3f} m（{cr['z']:.3f} → {z_max:.3f}）")
     print(f"[legdiag] 竖直速度峰值 = {vz_max:+.3f} m/s")
-    print(f"[legdiag] 膝角轨迹: 起 {knee_log[0]:+.2f} -> 末 {knee_log[-1]:+.2f}（目标 {args_cli.extend_knee:+.2f}）")
-    # 轮体世界高度（用 body 位置，最准）
-    body_names = robot.body_names
-    try:
-        wl = body_names.index("wheel_L_Link")
-        wr = body_names.index("wheel_R_Link")
-        wheel_bottom = min(
-            robot.data.body_pos_w[:, wl, 2].mean().item(),
-            robot.data.body_pos_w[:, wr, 2].mean().item(),
-        ) - 0.127
-        print(f"[legdiag] 末尾轮底世界高度 = {wheel_bottom:+.3f} m（负值=压入地面）")
-    except Exception as e:  # noqa: BLE001
-        print(f"[legdiag] 轮底量测失败: {e}")
-    print(f"[legdiag] 末尾 hip 实际 = {last_hip[-1]:+.2f}（指令 {-0.25 if True else 0:+.2f} 量级）")
-    if contact_hist:
-        first_lost = next((i for i, c in enumerate(contact_hist) if c < 0.5), None)
-        print(f"[legdiag] 轮接地比例轨迹: 首帧 {contact_hist[0]:.2f} → 末帧 {contact_hist[-1]:.2f}"
-              f"；首次失去接地在第 {first_lost} 步" if first_lost is not None
-              else f"[legdiag] 轮接地比例: 全程 {min(contact_hist):.2f}~{max(contact_hist):.2f}（未完全离地）")
-    if pitch_hist:
-        print(f"[legdiag] projected_gravity_z: 起 {pitch_hist[0]:+.2f} → 末 {pitch_hist[-1]:+.2f}"
-              f"（-1 = 完全竖直，0 = 倒成水平）")
-    print(f"[legdiag] 判定: {'✅ 腿伸展能抬起机身' if (z_max - z_before) > 0.08 else '❌ 抬不起来（执行器/腿模型问题）'}")
-    print("=" * 60)
+    print(f"[legdiag] 姿态范围 g_z = [{gz_min:+.2f}, {gz_max:+.2f}]（-1=完全竖直，0=水平）"
+          f" → 姿态变化 {abs(gz_max - gz_min):.2f}")
+    print(f"[legdiag] 轮失去接地发生在第 {lost_at} 步" if lost_at is not None
+          else "[legdiag] 轮全程保持接地")
+    print(f"[legdiag] 结束时 z={end['z']:.3f} g_z={end['gz']:+.2f}")
+    print("=" * 66)
     env.close()
     return 0
 
