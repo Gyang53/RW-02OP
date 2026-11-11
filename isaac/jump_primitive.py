@@ -42,7 +42,9 @@ EXTEND_ACTION = EXTEND_TARGET_RAD / LEG_SCALE
 HIP_PUSH_ACTION = 2.0
 # ⚠ 轮速方向：诊断显示 vx 为正时 wheel 关节速度为负（正转 = 世界 -x）。
 # 因此「向前」要用负的轮速指令，否则原语会让机器人倒退。
-WHEEL_ACTION = -1.0  # -10 rad/s ≈ 前进 1.27 m/s
+WHEEL_ACTION = -1.0  # -10 rad/s ≈ 前进 1.27 m/s（腾空相位）
+WHEEL_CROUCH_ACTION = -0.4  # 蓄力期保留 0.5 m/s 前进，避免起跳变成纯竖直
+WHEEL_EXTEND_ACTION = -0.8  # 弹射期 1.0 m/s 前进，与竖直弹射合成抛物线
 
 
 @dataclass
@@ -139,10 +141,13 @@ class JumpPrimitive:
         # 否则腿伸展的反作用力被轮子的滚动吃掉，变成向前加速而不是把机身抬起来
         # （实测：轮子保持 -10 rad/s 时 knee 正常从 -1.51 打到 +1.00，
         #  但 base_z 峰值只有 0.604，完全没离地）。轮子当发射基座，腾空后再恢复滚动。
-        a[pre, 6] = 0.0
-        a[pre, 7] = 0.0
-        a[ext, 6] = 0.0
-        a[ext, 7] = 0.0
+        # 轮速采用「部分保留前进」：完全锁死会只剩竖直速度，落地撞回障碍
+        # （0.12m 障碍实测：base_z +0.15m 但 dx 回到 1.2m = 被推回起点）。
+        # 蓄力期保留 0.5 m/s、弹射期 1.0 m/s、腾空 1.27 m/s，合成抛物线。
+        a[pre, 6] = WHEEL_CROUCH_ACTION
+        a[pre, 7] = WHEEL_CROUCH_ACTION
+        a[ext, 6] = WHEEL_EXTEND_ACTION
+        a[ext, 7] = WHEEL_EXTEND_ACTION
         a[tuck, 6] = WHEEL_ACTION
         a[tuck, 7] = WHEEL_ACTION
 
