@@ -1153,6 +1153,13 @@ $RUN $WS/isaac/play_keyboard.py --task Isaac-Velocity-Flat-Nezha-S06-GetUpTest -
 3. 若要获得跳跃能力，需要**改变机制**（储能弹簧、跳跃专用执行器、
    或用障碍/斜坡借力），而不是改腿长或加力。
 
+**×1.0 结论的可靠性核查**（S10 策略只训了 600/2500 iters，需确认不是欠训练造成的假象）：
+`eval_skills` 在 S10 上实测 `walk_stand` vx 误差 **0.068**、`walk_fast` **0.129**
+（与 ×0.6 的 0.096/0.159 同档），轮接地 0.80–0.93，但 fall_rate 9.4%–25%（未完全收敛）。
+姿态提取时 g_z 稳定在 −1.00，说明取到的"稳定蹲姿/站姿"本身是有效的。
+结合"×0.6（策略已充分收敛）上同样成立同一不变量"，判定 ×1.0 的"无弹道"结论成立；
+S10 未训满是唯一保留意见（若有人要继续，把训练跑到 2500 iters 即可消除）。
+
 **×1.0 实验资产**（保留供复用，不影响现有功能）：
 `assets/.../mjcf/mjmodel_s10.xml`、`mjmodel_s10/`（USD）、
 `nezha_s10_cfg.py`、`flat_env_s10_cfg.py`、任务 `Isaac-Velocity-Flat-Nezha-S10`。
