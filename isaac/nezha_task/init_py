@@ -143,3 +143,25 @@ gym.register(
         "default_agent": "rsl_rl",
     },
 )
+
+gym.register(
+    id="Isaac-Velocity-Flat-Nezha-S10",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.flat_env_s10_cfg:NezhaFlatS10EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NezhaFlatPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)
+
+gym.register(
+    id="Isaac-Velocity-Flat-Nezha-S06-Payload",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.flat_env_s06_payload_cfg:NezhaPayloadS06EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NezhaFlatPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)
