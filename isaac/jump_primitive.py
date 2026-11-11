@@ -57,11 +57,11 @@ WHEEL_EXTEND_ACTION = -0.8  # 弹射期 1.0 m/s 前进，与竖直弹射合成�
 
 @dataclass
 class JumpTiming:
-    # 时序按「以 1 m/s 前进、0.6 m 触发」标定：
-    # 蓄力 0.30 s 走 0.30 m → 起跳点距障碍 0.30 m；弹射+收腿 0.40 s 覆盖 0.40 m
-    # → 正好在障碍上方腾空。crouch 0.45 s 会让起跳点离障碍太远，落点在障碍上。
+    # 时序必须匹配参考轨迹的录制速度：120 帧 × 20 ms = 2.4 s（1×）。
+    # 实测 1× 的 vz_max 最高（+1.185），2×~4× 反而更低；之前把 120 帧压到 0.16 s
+    # 等于 15× 速，实测 base_z 只有 0.604（无弹射）。
     crouch: float = 0.30
-    extend: float = 0.16
+    extend: float = 2.40
     tuck: float = 0.22
     recover: float = 0.25
 
@@ -224,9 +224,9 @@ class JumpPrimitive:
                 if name in slot:
                     a[:, pos] = torch.where(active, picked[:, slot[name]] / LEG_SCALE,
                                             torch.zeros_like(a[:, pos]))
-        # 轮速：蓄力/伸展保持低前进速度，末段恢复
-        a[pre | ext, 6] = WHEEL_CROUCH_ACTION
-        a[pre | ext, 7] = WHEEL_CROUCH_ACTION
+        # 轮速：与参考录制条件一致（录制时轮速动作为 0），末段恢复前进
+        a[pre | ext, 6] = 0.0
+        a[pre | ext, 7] = 0.0
         a[post, 6] = WHEEL_ACTION
         a[post, 7] = WHEEL_ACTION
         return a
