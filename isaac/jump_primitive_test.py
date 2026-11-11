@@ -15,10 +15,11 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 AppLauncher.add_app_launcher_args(parser)
-parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha-S06-V4")
+parser.add_argument("--task", default="Isaac-Velocity-Flat-Nezha-S06-JumpTest")
 parser.add_argument("--checkpoint", required=True)
 parser.add_argument("--num_envs", type=int, default=16)
 parser.add_argument("--steps", type=int, default=400)
+parser.add_argument("--use_primitive", type=int, default=1, help="1=注入跳跃原语, 0=纯策略对照")
 parser.add_argument("--trigger_dist", type=float, default=0.6, help="障碍物距离小于该值时触发跳跃")
 parser.add_argument("--vx", type=float, default=1.0)
 args_cli = parser.parse_args()
@@ -82,8 +83,15 @@ def main() -> int:
     crossed = torch.zeros(args_cli.num_envs, dtype=torch.bool, device=dev)
     airborne_any = np.zeros(args_cli.num_envs, dtype=bool)
     z_max = np.zeros(args_cli.num_envs)
+    z_min = np.full(args_cli.num_envs, 9.0)
+    knee_min = np.full(args_cli.num_envs, 9.0)
+    knee_max = np.full(args_cli.num_envs, -9.0)
     wheel_air = np.zeros((n, args_cli.num_envs), dtype=bool)
     triggered = np.zeros(args_cli.num_envs, dtype=bool)
+    crossings = np.zeros(args_cli.num_envs, dtype=int)
+    prev_dx = np.full(args_cli.num_envs, 9.0)
+    min_dx = np.full(args_cli.num_envs, 9.0)
+    x_max = np.zeros(args_cli.num_envs)
 
     sensor = env.unwrapped.scene.sensors.get("contact_forces")
     names = list(sensor.body_names) if sensor is not None else []
@@ -108,7 +116,7 @@ def main() -> int:
             obs = obs["policy"]
         act = torch.as_tensor(policy(obs.detach().cpu().numpy()), dtype=torch.float32,
                               device=env.unwrapped.device)
-        if prim.active.any():
+        if args_cli.use_primitive and prim.active.any():
             prim_act = prim.actions()
             act = torch.where(prim.active.unsqueeze(-1), prim_act, act)
 
@@ -118,9 +126,22 @@ def main() -> int:
 
         x = robot.data.root_pos_w[:, 0].cpu().numpy()
         ox = obstacle.data.root_pos_w[:, 0].cpu().numpy()
+        dx_now = ox - x
         crossed |= torch.as_tensor(x > ox, device=dev)
+        # obs_dx 从 <0.2 跳回 ~1.2 视作一次越障（障碍物会复位）
+        if i > 0:
+            respawn = (prev_dx < 0.25) & (dx_now > 0.9)
+            crossings += respawn.astype(int)
+        prev_dx = dx_now
+        min_dx = np.minimum(min_dx, dx_now)
+        x_max = np.maximum(x_max, x)
         z = robot.data.root_pos_w[:, 2].cpu().numpy()
         z_max = np.maximum(z_max, z)
+        z_min = np.minimum(z_min, z)
+        kidx = robot.joint_names.index("knee_L_Joint")
+        kn = robot.data.joint_pos[:, kidx].cpu().numpy()
+        knee_min = np.minimum(knee_min, kn)
+        knee_max = np.maximum(knee_max, kn)
         if sensor is not None and wl is not None:
             f = sensor.data.net_forces_w
             if hasattr(f, "torch"):
@@ -136,10 +157,15 @@ def main() -> int:
     print(f"[jump] 越过障碍成功率 = {crossed_np.mean() * 100:.1f}%  ({int(crossed_np.sum())}/{args_cli.num_envs})")
     print(f"[jump] 出现双轮离地的环境数 = {int(airborne_any.sum())}/{args_cli.num_envs}")
     print(f"[jump] 双轮离地帧占比 = {wheel_air.mean() * 100:.1f}%")
-    print(f"[jump] base_z 最大值 = {z_max.max():.3f} m（站立 ≈ 0.60）")
+    print(f"[jump] base_z 最大/最小 = {z_max.max():.3f} / {z_min.min():.3f} m（站立 ≈ 0.60）")
+    print(f"[jump] knee_L 范围 = [{knee_min.min():+.2f}, {knee_max.max():+.2f}] rad（骑行 -0.92，蓄力应到 -1.40）")
     dx_end = (obstacle.data.root_pos_w[:, 0] - robot.data.root_pos_w[:, 0]).cpu().numpy()
     print("[jump] 结束时 env→障碍距离（负=已越过）:", np.round(dx_end, 2).tolist())
     adv = (robot.data.root_pos_w[:, 0] - x0).cpu().numpy()
+    print(f"[jump] 模式 = {'策略+原语' if args_cli.use_primitive else '纯策略(对照)'}")
+    print(f"[jump] 越障次数（障碍复位计数）= {crossings.sum()}  均值 {crossings.mean():.2f}/环境")
+    print(f"[jump] 触及障碍的环境数（最近距离<0.25m）= {int((min_dx < 0.25).sum())}/{args_cli.num_envs}")
+    print("[jump] 逐环境越障次数:", crossings.tolist())
     print("[jump] 逐环境前进距离(m):", np.round(adv, 2).tolist())
     print(f"[jump] 前进超过 {args_cli.trigger_dist * 2:.1f} m 的环境数 = {int((adv > args_cli.trigger_dist * 2).sum())}/{args_cli.num_envs}")
     print(f"[jump] 平均前进距离 = {adv.mean():.2f} m")

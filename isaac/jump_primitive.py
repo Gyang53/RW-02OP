@@ -130,10 +130,16 @@ class JumpPrimitive:
         # 腾空收腿
         a[tuck, 2] = knee_tuck_act
         a[tuck, 5] = knee_tuck_act
-        # 轮子全相位保持滚动（落地后继续前进）
-        for phase in (pre, ext, tuck):
-            a[phase, 6] = WHEEL_ACTION
-            a[phase, 7] = WHEEL_ACTION
+        # ⚠ 轮子在「蓄力 + 弹射」相位必须**锁死（目标 0 速度 = 刹车）**：
+        # 否则腿伸展的反作用力被轮子的滚动吃掉，变成向前加速而不是把机身抬起来
+        # （实测：轮子保持 -10 rad/s 时 knee 正常从 -1.51 打到 +1.00，
+        #  但 base_z 峰值只有 0.604，完全没离地）。轮子当发射基座，腾空后再恢复滚动。
+        a[pre, 6] = 0.0
+        a[pre, 7] = 0.0
+        a[ext, 6] = 0.0
+        a[ext, 7] = 0.0
+        a[tuck, 6] = WHEEL_ACTION
+        a[tuck, 7] = WHEEL_ACTION
 
         # 极简姿态：蓄力/弹射/收腿三相位都显式给髋目标（骑行姿态 ~ 助推），
         # 避免策略在该窗口输出与弹射冲突的髋角。
