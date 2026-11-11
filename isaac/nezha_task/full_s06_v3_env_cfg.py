@@ -142,7 +142,10 @@ def _respawn_obstacle(
     robot = env.scene["robot"]
     obs = env.scene["obstacle"]
     step = int(getattr(env, "_sim_step_counter", 0))
-    progress = min(max(step / max(ramp_steps, 1), 0.0), 1.0)
+    # ⚠ 课程必须从 warmup 结束才开始升温：原写法 progress=step/ramp_steps 在
+    # warmup(30000 步) 期间就已经升到 1.0，导致障碍一激活就是最高 0.18 m，
+    # 机器人跳不过去 → jump/obstacle 奖励恒为 0（实测 jump_takeoff 1e-4）。
+    progress = min(max((step - warmup_steps) / max(ramp_steps, 1), 0.0), 1.0)
     hi = h_min + (h_max - h_min) * progress
     h = torch.empty(len(env_ids), device=env.device).uniform_(h_min, hi)
 

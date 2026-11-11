@@ -61,9 +61,11 @@ def assign_mixed_groups(
 def reset_mixed(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
+    probability: float | None = None,  # 兼容评测脚本写入倒地概率的参数，此处忽略（分组已固定）
     z_range: tuple = (0.28, 0.42),
     tilt_range: tuple = (0.9, 1.6),
     joint_noise: float = 0.15,
+    extended_only: bool = False,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ):
     """复位：起身环境放倒地姿态，其余环境正常站立复位。
@@ -117,8 +119,11 @@ def reset_mixed(
     asset.write_root_velocity_to_sim(torch.zeros(k, 6, device=env.device), env_ids=fallen_ids)
 
     # 关节：伸腿（knee 上限，轮远端撑地）/ 收腿（knee≈0，轮贴近机身）
+    # extended_only=True 时一律用「伸腿 + abad 张开」姿态：v1 文档记录的起身成功配方
+    # （knee=+0.663、abad=-0.32 时轮子能伸到地面形成支撑点；收腿姿态轮子悬空，
+    #  纯靠 RL 探索几乎学不会，实测训练 3000 iters 起身率仍为 0）。
     joint_pos = asset.data.default_joint_pos[fallen_ids].clone()
-    extended = torch.rand(k, device=env.device) < 0.5
+    extended = torch.ones(k, dtype=torch.bool, device=env.device) if extended_only else (torch.rand(k, device=env.device) < 0.5)
     knee = torch.where(extended, torch.full_like(joint_pos[:, 2], 0.663), torch.zeros_like(joint_pos[:, 2]))
     joint_pos[:, 2] = knee
     joint_pos[:, 6] = knee

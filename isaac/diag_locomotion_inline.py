@@ -94,6 +94,14 @@ def main() -> int:
     vx = np.zeros(n)
     base_z = np.zeros(n)
     vx_err = np.zeros(n)
+    env_num = args_cli.num_envs
+    vx_per_env = np.zeros(env_num)
+    base_z_per_env = np.zeros(env_num)
+    wl_rate = np.zeros(env_num)
+    wr_rate = np.zeros(env_num)
+    abadL = np.zeros(env_num)
+    abadR = np.zeros(env_num)
+    legvel = np.zeros(env_num)
 
     def forces(idx):
         f = sensor.data.net_forces_w  # (num_envs, num_bodies, 3)
@@ -125,9 +133,26 @@ def main() -> int:
         wspeed[i] = np.abs(jv).mean()
         wz[i] = np.abs(jv[:, 0] - vx[i] / WHEEL_R).mean()
         joint_pos[i] = robot.data.joint_pos[:, leg_idx].cpu().numpy().mean(axis=0)
+        vx_per_env += robot.data.root_lin_vel_b[:, 0].cpu().numpy() / n
+        base_z_per_env += robot.data.root_pos_w[:, 2].cpu().numpy() / n
+        abadL += robot.data.joint_pos[:, joint_idx["abad_L_Joint"]].cpu().numpy() / n
+        abadR += robot.data.joint_pos[:, joint_idx["abad_R_Joint"]].cpu().numpy() / n
+        legvel += np.abs(robot.data.joint_vel[:, [joint_idx[x] for x in LEG_NAMES]].cpu().numpy()).mean(axis=1) / n
+        if sensor is not None:
+            wl_rate += (forces(wl) > 1.0).float().cpu().numpy() / n
+            wr_rate += (forces(wr) > 1.0).float().cpu().numpy() / n
         joint_vel_abs[i] = np.abs(robot.data.joint_vel[:, leg_idx].cpu().numpy()).mean(axis=0)
 
     both = contact_wl & contact_wr
+    # 每个环境一行的逐环境明细（判断是「全部走不好」还是「少数倒地环境拖低均值」）
+    print("[diag] per-env: idx  cmd_vx   vx    base_z  wheelL  wheelR  abad_L  abad_R  legvel")
+    cmd_vx = cmd[:, 0].detach().cpu().numpy()
+    lz = base_z_per_env
+    for e in range(env_num):
+        print(
+            f"[diag]   {e:3d}  {cmd_vx[e]:+.2f}  {vx_per_env[e]:+.2f}  {lz[e]:.3f}   "
+            f"{wl_rate[e]*100:5.1f}%  {wr_rate[e]*100:5.1f}%  {abadL[e]:+.2f}  {abadR[e]:+.2f}  {legvel[e]:.2f}"
+        )
     print("=" * 64)
     print(f"[diag] task={args_cli.task} envs={args_cli.num_envs} steps={n}")
     print(f"[diag] vx mean={vx.mean():+.3f}  |vx-cmd|={vx_err.mean():.3f}")

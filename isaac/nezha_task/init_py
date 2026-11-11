@@ -65,3 +65,37 @@ gym.register(
         "default_agent": "rsl_rl",
     },
 )
+
+gym.register(
+    id="Isaac-Velocity-Flat-Nezha-S06-V3",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.full_s06_v3_env_cfg:NezhaFullS06V3EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NezhaFlatPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)
+
+
+gym.register(
+    id="Isaac-Velocity-Flat-Nezha-S06-V4",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.jump_s06_v4_env_cfg:NezhaJumpS06V4EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NezhaFlatPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)
+
+gym.register(
+    id="Isaac-Velocity-Flat-Nezha-S06-V5",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.getup_s06_v5_env_cfg:NezhaGetUpS06V5EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NezhaFlatPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)
