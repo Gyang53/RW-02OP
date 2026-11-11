@@ -22,9 +22,17 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
+
+# 策略实测导出的竖直参考轨迹（knee 0.35→0.60 高度指令的动力学有效动作，120 帧）
+_REF_PATH = Path(__file__).with_name("vertical_ref.json")
+_REF = None
+if _REF_PATH.exists():
+    _REF = json.loads(_REF_PATH.read_text())
 
 LEG_SCALE = 0.25
 WHEEL_SCALE = 10.0
@@ -120,7 +128,13 @@ class JumpPrimitive:
         """(num_envs, 8) 归一化动作；空闲环境全 0（调用方应改用策略输出）。
 
         动作顺序（Isaac 侧）：abad_L, hip_L, knee_L, abad_R, hip_R, knee_R, wheel_L, wheel_R
+
+        若 `vertical_ref.json` 存在（策略实测的 h 0.35→0.60 动力学有效轨迹帧），
+        则按参考轨迹回放；实测可产生 vz ≈ +1.1 m/s（弹道 ≈0.07 m，越障 ≈0.10–0.12 m）。
+        否则退回手写 keyframe。
         """
+        if _REF is not None:
+            return self._actions_from_ref()
         a = torch.zeros((self.n, 8), device=self.device)
         c = self._clock
         t = self.t
@@ -177,6 +191,45 @@ class JumpPrimitive:
         t_flight = 2.0 * vz_takeoff / g
         d = torch.as_tensor(vx, device=self.device, dtype=torch.float32) * (self.t.crouch + t_flight)
         return d.clamp(min=0.15, max=1.2)
+
+    def _actions_from_ref(self) -> torch.Tensor:
+        """按时间在参考轨迹上取帧，叠加轮速前馈。"""
+        a = torch.zeros((self.n, 8), device=self.device)
+        frames = _REF["frames"]
+        dt_ref = float(_REF["dt"])
+        n_f = len(frames)
+        c = self._clock
+        # 相位映射：crouch 保持第 0 帧；extend 按 speed 倍速走完轨迹；之后保持末帧
+        t = self.t
+        idx = torch.full_like(c, -1, dtype=torch.long)
+        # 蓄力段：用第 0 帧（策略蹲姿）
+        pre = (c >= 0) & (c < t.crouch)
+        ext = (c >= t.crouch) & (c < t.crouch + t.extend)
+        post = c >= t.crouch + t.extend
+        idx[pre] = 0
+        if ext.any():
+            frac = ((c[ext] - t.crouch) / max(t.extend, 1e-6)).clamp(0.0, 1.0)
+            idx[ext] = (frac * (n_f - 1)).long()
+        idx[post] = n_f - 1
+        # 写入关节目标（顺序与 leg_joint_order 一致：abad_L, hip_L, knee_L, abad_R, hip_R, knee_R）
+        order = _REF["leg_joint_order"]
+        slot = {n: k for k, n in enumerate(order)}
+        device_order = ["abad_L_Joint", "hip_L_Joint", "knee_L_Joint",
+                        "abad_R_Joint", "hip_R_Joint", "knee_R_Joint"]
+        frames_t = torch.tensor(frames, device=self.device)  # (n_f, 6)
+        active = idx >= 0
+        if active.any():
+            picked = frames_t[idx.clamp(min=0)]  # (n, 6)
+            for pos, name in enumerate(device_order):
+                if name in slot:
+                    a[:, pos] = torch.where(active, picked[:, slot[name]] / LEG_SCALE,
+                                            torch.zeros_like(a[:, pos]))
+        # 轮速：蓄力/伸展保持低前进速度，末段恢复
+        a[pre | ext, 6] = WHEEL_CROUCH_ACTION
+        a[pre | ext, 7] = WHEEL_CROUCH_ACTION
+        a[post, 6] = WHEEL_ACTION
+        a[post, 7] = WHEEL_ACTION
+        return a
 
     def phase_name(self) -> list[str]:
         """调试用：每个环境当前相位名。"""

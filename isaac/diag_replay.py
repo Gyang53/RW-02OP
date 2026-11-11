@@ -29,6 +29,7 @@ parser.add_argument("--checkpoint", required=True)
 parser.add_argument("--num_envs", type=int, default=4)
 parser.add_argument("--h_low", type=float, default=0.35)
 parser.add_argument("--h_high", type=float, default=0.60)
+parser.add_argument("--dump", default="", help="把参考轨迹写到该 JSON（供 jump_primitive 使用）")
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -105,6 +106,19 @@ def main() -> int:
         traj.append(robot.data.joint_pos[0, leg_idx].cpu().numpy().copy())
     z_high = robot.data.root_pos_w[:, 2].mean().item()
     print(f"[replay] 参考轨迹录完: z {z_low:.3f} → {z_high:.3f}（{len(traj)} 步）")
+    if args_cli.dump:
+        import json
+        from pathlib import Path
+        payload = {
+            "note": "策略 h 0.35->0.60 的竖直参考轨迹（关节目标，rad），录自 model_8748",
+            "leg_joint_order": [jn[i] for i in leg_idx],
+            "dt": env.unwrapped.step_dt,
+            "z_low": z_low,
+            "z_high": z_high,
+            "frames": [[float(x) for x in frame] for frame in traj],
+        }
+        Path(args_cli.dump).write_text(json.dumps(payload, indent=1))
+        print(f"[replay] 已写出 {args_cli.dump}（{len(traj)} 帧）")
 
     # 3) 倍速回放
     print("=" * 66)
