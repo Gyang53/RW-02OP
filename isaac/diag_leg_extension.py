@@ -33,6 +33,7 @@ parser.add_argument("--extend_knee", type=float, default=0.663)
 parser.add_argument("--extend_hip", type=float, default=-0.25)
 parser.add_argument("--ramp_steps", type=int, default=20, help="伸展用多少个环境步（20 = 0.4 s）")
 parser.add_argument("--hold_steps", type=int, default=20)
+parser.add_argument("--sweep", action="store_true", help="扫掠 ramp_steps（伸展速度）")
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
@@ -99,6 +100,42 @@ def main() -> int:
         print("[legdiag] ❌ 前置条件不满足：蹲姿不是竖直的（g_z≈0 表示躺倒），本次测量无效，中止。")
         env.close()
         return 2
+
+    def run_once(ramp_steps: int):
+        # 复位并重新建立蹲姿
+        env.reset()
+        for _ in range(20):
+            env.step(torch.zeros(env.action_space.shape, device=dev))
+        for _ in range(60):
+            env.step(act_of(args_cli.crouch_knee, args_cli.crouch_hip))
+        base = snap()
+        z_m, vz_m, gz_lo, gz_hi, lost = base["z"], -9.9, base["gz"], base["gz"], None
+        vz_last = 0.0
+        for i in range(ramp_steps + args_cli.hold_steps):
+            frac = min(1.0, (i + 1) / ramp_steps)
+            knee = args_cli.crouch_knee + frac * (args_cli.extend_knee - args_cli.crouch_knee)
+            hip = args_cli.crouch_hip + frac * (args_cli.extend_hip - args_cli.crouch_hip)
+            env.step(act_of(knee, hip))
+            sm = snap()
+            z_m = max(z_m, sm["z"]); vz_m = max(vz_m, sm["vz"])
+            gz_lo, gz_hi = min(gz_lo, sm["gz"]), max(gz_hi, sm["gz"])
+            if lost is None and sm["contact"] < 0.5:
+                lost = i
+            if i == ramp_steps - 1:
+                vz_last = sm["vz"]
+        return base["z"], z_m, vz_m, vz_last, gz_lo, gz_hi, lost
+
+    if args_cli.sweep:
+        print("=" * 70)
+        print(f"{'ramp_steps':>10} {'时长(ms)':>9} {'抬升(m)':>8} {'vz_peak':>9} {'vz_末伸展':>9} {'失接地步':>9}")
+        print("-" * 70)
+        for rs in (3, 5, 8, 12, 20):
+            z0, zm, vzm, vzl, glo, ghi, lost = run_once(rs)
+            print(f"{rs:>10} {rs * 20:>9} {zm - z0:>+8.3f} {vzm:>+9.3f} {vzl:>+9.3f} "
+                  f"{(str(lost) if lost is not None else '未失'):>9}")
+        print("=" * 70)
+        env.close()
+        return 0
 
     # ---- 3) 平缓伸展（knee/hip 同步插值）----
     z_max, vz_max = cr["z"], -9.9
