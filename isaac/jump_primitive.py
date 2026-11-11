@@ -28,11 +28,16 @@ import torch
 
 LEG_SCALE = 0.25
 WHEEL_SCALE = 10.0
+# 骑行姿态（实测好策略：base_z 0.467、hip≈+0.40、knee≈-0.92）
+HIP_RIDE = 0.40
+KNEE_RIDE = -0.92
 KNEE_CROUCH = -1.40
 KNEE_TUCK = -1.20
 EXTEND_ACTION = 8.0  # 饱和（target = 2.0 rad，远超 knee 上限 0.663）
 HIP_PUSH_ACTION = 2.0
-WHEEL_ACTION = 1.0  # 10 rad/s ≈ 1.27 m/s 滚动
+# ⚠ 轮速方向：诊断显示 vx 为正时 wheel 关节速度为负（正转 = 世界 -x）。
+# 因此「向前」要用负的轮速指令，否则原语会让机器人倒退。
+WHEEL_ACTION = -1.0  # -10 rad/s ≈ 前进 1.27 m/s
 
 
 @dataclass
@@ -129,6 +134,13 @@ class JumpPrimitive:
         for phase in (pre, ext, tuck):
             a[phase, 6] = WHEEL_ACTION
             a[phase, 7] = WHEEL_ACTION
+
+        # 极简姿态：蓄力/弹射/收腿三相位都显式给髋目标（骑行姿态 ~ 助推），
+        # 避免策略在该窗口输出与弹射冲突的髋角。
+        a[pre, 1] = HIP_RIDE / LEG_SCALE
+        a[pre, 4] = HIP_RIDE / LEG_SCALE
+        a[tuck, 1] = HIP_RIDE / LEG_SCALE
+        a[tuck, 4] = HIP_RIDE / LEG_SCALE
         return a
 
     def phase_name(self) -> list[str]:
