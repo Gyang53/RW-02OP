@@ -35,6 +35,26 @@ from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
 LEG_SCALE = 0.25
 
+# 竖直伸展轨迹（几何求解：让轮子始终在机身正下方）
+# knee -> hip，来自 assets 几何（S06, 腿段 x0.6）
+VERT_TABLE = [(-1.46, 0.99), (-1.20, 0.78), (-1.00, 0.65), (-0.70, 0.47),
+              (-0.40, 0.31), (0.00, 0.09), (0.30, -0.06), (0.66, -0.25)]
+
+
+def hip_for_knee(knee: float) -> float:
+    """按表线性插值：给定 knee 返回使腿竖直的 hip。"""
+    xs = [k for k, _ in VERT_TABLE]
+    ys = [h for _, h in VERT_TABLE]
+    if knee <= xs[0]:
+        return ys[0]
+    if knee >= xs[-1]:
+        return ys[-1]
+    for i in range(1, len(xs)):
+        if knee <= xs[i]:
+            t = (knee - xs[i - 1]) / (xs[i] - xs[i - 1])
+            return ys[i - 1] + t * (ys[i] - ys[i - 1])
+    return ys[-1]
+
 
 def main() -> int:
     env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
@@ -61,14 +81,15 @@ def main() -> int:
         robot.write_root_velocity_to_sim(torch.zeros((n, 6), device=dev))
 
     # 蹲姿（几何：knee=-1.40 时机身约 0.34）
-    set_pose(args_cli.crouch_knee, 0.40, 0.34)
+    set_pose(args_cli.crouch_knee, hip_for_knee(args_cli.crouch_knee), 0.34)
     # ⚠ 稳定阶段必须**持续命令蹲姿**：动作 0 意味着关节目标 0（站立），
     # 会在 30 步内把蹲姿顶回去（实测膝角从 -1.40 被拉到 -0.09）。
     crouch_act = torch.zeros(env.action_space.shape, device=dev)
+    hip_c = hip_for_knee(args_cli.crouch_knee)
     for i in kidx:
         crouch_act[:, i] = args_cli.crouch_knee / LEG_SCALE
     for i in hidx:
-        crouch_act[:, i] = 0.40 / LEG_SCALE
+        crouch_act[:, i] = hip_c / LEG_SCALE
     for _ in range(30):
         env.step(crouch_act)
     z_before = robot.data.root_pos_w[:, 2].mean().item()
@@ -76,20 +97,33 @@ def main() -> int:
 
     # 饱和伸展：膝 +0.663、髋 +0.40、轮 0（锁定）
     act = torch.zeros(env.action_space.shape, device=dev)
-    for i in kidx:
-        act[:, i] = args_cli.extend_knee / LEG_SCALE
-    for i in hidx:
-        act[:, i] = 0.40 / LEG_SCALE
 
     z_max, vz_max = z_before, -9.9
     knee_log = []
+    pen_log = []  # 轮底穿透量（负 = 穿入地面）
+    last_hip = []
+    k_from, k_to = args_cli.crouch_knee, args_cli.extend_knee
     for step in range(args_cli.hold_steps):
+        # 线性推进 knee，并按竖直轨迹同步给 hip（关键：髋必须跟着动）
+        frac = min(1.0, (step + 1) / max(1, args_cli.hold_steps // 2))
+        knee_cmd = k_from + frac * (k_to - k_from)
+        hip_cmd = hip_for_knee(knee_cmd)
+        act[:, kidx[0]] = knee_cmd / LEG_SCALE
+        act[:, kidx[1]] = knee_cmd / LEG_SCALE
+        act[:, hidx[0]] = hip_cmd / LEG_SCALE
+        act[:, hidx[1]] = hip_cmd / LEG_SCALE
         env.step(act)
         z = robot.data.root_pos_w[:, 2]
         vz = robot.data.root_lin_vel_w[:, 2]
         z_max = max(z_max, z.mean().item())
         vz_max = max(vz_max, vz.mean().item())
         knee_log.append(robot.data.joint_pos[:, kidx[0]].mean().item())
+        # 轮底世界高度（近似）：轮 link 原点 - 0.127，用于判断是否压穿地面
+        jn_all = robot.joint_names
+        widx = [jn_all.index("wheel_L_Joint"), jn_all.index("wheel_R_Joint")]
+        wz = robot.data.joint_pos.new_zeros(())  # 占位避免未用变量告警
+        pen_log.append(robot.data.root_pos_w[:, 2].mean().item())
+        last_hip.append(robot.data.joint_pos[:, hidx[0]].mean().item())
 
     print("=" * 60)
     print(f"[legdiag] 伸展 {args_cli.hold_steps} 步（每步 {env.unwrapped.step_dt*1000:.1f} ms）")
@@ -97,6 +131,19 @@ def main() -> int:
     print(f"[legdiag] base_z 峰值 = {z_max:.3f}   抬升 = {z_max - z_before:+.3f} m")
     print(f"[legdiag] 竖直速度峰值 = {vz_max:+.3f} m/s")
     print(f"[legdiag] 膝角轨迹: 起 {knee_log[0]:+.2f} -> 末 {knee_log[-1]:+.2f}（目标 {args_cli.extend_knee:+.2f}）")
+    # 轮体世界高度（用 body 位置，最准）
+    body_names = robot.body_names
+    try:
+        wl = body_names.index("wheel_L_Link")
+        wr = body_names.index("wheel_R_Link")
+        wheel_bottom = min(
+            robot.data.body_pos_w[:, wl, 2].mean().item(),
+            robot.data.body_pos_w[:, wr, 2].mean().item(),
+        ) - 0.127
+        print(f"[legdiag] 末尾轮底世界高度 = {wheel_bottom:+.3f} m（负值=压入地面）")
+    except Exception as e:  # noqa: BLE001
+        print(f"[legdiag] 轮底量测失败: {e}")
+    print(f"[legdiag] 末尾 hip 实际 = {last_hip[-1]:+.2f}（指令 {-0.25 if True else 0:+.2f} 量级）")
     print(f"[legdiag] 判定: {'✅ 腿伸展能抬起机身' if (z_max - z_before) > 0.08 else '❌ 抬不起来（执行器/腿模型问题）'}")
     print("=" * 60)
     env.close()
