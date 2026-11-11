@@ -33,7 +33,12 @@ HIP_RIDE = 0.40
 KNEE_RIDE = -0.92
 KNEE_CROUCH = -1.40
 KNEE_TUCK = -1.20
-EXTEND_ACTION = 8.0  # 饱和（target = 2.0 rad，远超 knee 上限 0.663）
+# 伸展目标：正好到关节限位 +0.663（action = 0.663/0.25 ≈ 2.65）。
+# 原来用 +8（target 2.0 rad）会让腿在离地前撞限位，Isaac 的限位约束吸收冲量，
+# 弹射失效（实测 base_z 只到 0.604）。配合 stiffness 150 时，这个目标仍能让力矩
+# 在行程中维持在 90 N·m 上限附近，并在接近限位时自然衰减。
+EXTEND_TARGET_RAD = 0.663
+EXTEND_ACTION = EXTEND_TARGET_RAD / LEG_SCALE
 HIP_PUSH_ACTION = 2.0
 # ⚠ 轮速方向：诊断显示 vx 为正时 wheel 关节速度为负（正转 = 世界 -x）。
 # 因此「向前」要用负的轮速指令，否则原语会让机器人倒退。

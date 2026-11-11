@@ -121,3 +121,14 @@ gym.register(
         "default_agent": "rsl_rl",
     },
 )
+
+gym.register(
+    id="Isaac-Velocity-Flat-Nezha-S06-JumpTestHw90",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.jump_test_hw90_env_cfg:NezhaJumpTestHw90EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NezhaFlatPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)

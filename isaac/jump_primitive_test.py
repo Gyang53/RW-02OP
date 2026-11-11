@@ -20,6 +20,8 @@ parser.add_argument("--checkpoint", required=True)
 parser.add_argument("--num_envs", type=int, default=16)
 parser.add_argument("--steps", type=int, default=400)
 parser.add_argument("--use_primitive", type=int, default=1, help="1=注入跳跃原语, 0=纯策略对照")
+parser.add_argument("--const_torque", type=int, default=0,
+                    help="1=弹射相位用状态反馈保持恒定位置误差（≈恒定力矩），避免 PD 接近目标时自动刹车")
 parser.add_argument("--trigger_dist", type=float, default=0.6, help="障碍物距离小于该值时触发跳跃")
 parser.add_argument("--vx", type=float, default=1.0)
 args_cli = parser.parse_args()
@@ -118,6 +120,24 @@ def main() -> int:
                               device=env.unwrapped.device)
         if args_cli.use_primitive and prim.active.any():
             prim_act = prim.actions()
+            if args_cli.const_torque:
+                # 状态反馈：伸/缩相位把目标设为「当前角 + 固定超前量」，
+                # 使位置误差恒定 → PD 力矩在整个行程维持在上限（90 N·m），
+                # 不会像固定目标那样在接近目标时自动刹车。
+                phases = prim.phase_name()
+                q = robot.data.joint_pos
+                jn = robot.joint_names
+                kidx = [jn.index("knee_L_Joint"), jn.index("knee_R_Joint")]
+                hidx = [jn.index("hip_L_Joint"), jn.index("hip_R_Joint")]
+                for e, ph in enumerate(phases):
+                    if ph == "extend":
+                        prim_act[e, kidx[0]] = (q[e, kidx[0]] + 0.45) / 0.25
+                        prim_act[e, kidx[1]] = (q[e, kidx[1]] + 0.45) / 0.25
+                        prim_act[e, hidx[0]] = (q[e, hidx[0]] + 0.30) / 0.25
+                        prim_act[e, hidx[1]] = (q[e, hidx[1]] + 0.30) / 0.25
+                    elif ph == "crouch":
+                        prim_act[e, kidx[0]] = (q[e, kidx[0]] - 0.45) / 0.25
+                        prim_act[e, kidx[1]] = (q[e, kidx[1]] - 0.45) / 0.25
             act = torch.where(prim.active.unsqueeze(-1), prim_act, act)
 
         obs, _, term, trunc, _ = env.step(act)
