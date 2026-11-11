@@ -1604,6 +1604,8 @@ Isaac Lab 侧共注册 13 个任务，按用途分类：
 | `Isaac-Velocity-Flat-Nezha-S06-JumpTest` | ×0.6 | 0.12 m 固定障碍场景（演示 B 段） | 同上 |
 | `Isaac-Velocity-Flat-Nezha-S06-GetUpTest` | ×0.6 | 50% 倒地起步（演示 C 段） | `2026-11-11_15-20-44/model_11100.pt` |
 | `Isaac-Velocity-Flat-Nezha-S10` | ×1.0 腿长 | 验证"加长腿是否可行"（已证否） | `2026-11-11_17-09-01/model_600.pt` |
+| `Isaac-Velocity-Flat-Nezha-S06-Payload` | ×0.6 | **载荷训练/评测**（整机 20→30 kg，质心随机） | `2026-11-11_17-36-35/model_9050.pt` |
+| `Isaac-Velocity-Flat-Nezha-S06-Launch` | ×0.6 | **发射+落地训练**（含 10 kg，0.2–0.66 m 冲量） | `2026-11-11_17-53-53/model_9350.pt` |
 
 ### 实验/排查用（保留证据，不要当作能力基准）
 
