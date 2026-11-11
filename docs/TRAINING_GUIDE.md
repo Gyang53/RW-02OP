@@ -1585,6 +1585,41 @@ ros2 topic hz /mujoco_action    # 期望 >= 50 Hz
 
 ---
 
+## 附录 C：任务索引（哪个该用、哪个是历史）
+
+Isaac Lab 侧共注册 13 个任务，按用途分类：
+
+### 当前可用（推荐）
+
+| 任务 ID | 机器人 | 用途 | 配套 checkpoint |
+|---|---|---|---|
+| `Isaac-Velocity-Flat-Nezha-S06` | ×0.6 腿长 | **行走/蹲站基准**（演示 A 段用它） | `2026-11-11_14-33-09/model_8748.pt`（90 N·m 训练） |
+| `Isaac-Velocity-Flat-Nezha-S06-JumpTest` | ×0.6 | 0.12 m 固定障碍场景（演示 B 段） | 同上 |
+| `Isaac-Velocity-Flat-Nezha-S06-GetUpTest` | ×0.6 | 50% 倒地起步（演示 C 段） | `2026-11-11_15-20-44/model_11100.pt` |
+| `Isaac-Velocity-Flat-Nezha-S10` | ×1.0 腿长 | 验证"加长腿是否可行"（已证否） | `2026-11-11_17-09-01/model_600.pt` |
+
+### 实验/排查用（保留证据，不要当作能力基准）
+
+| 任务 ID | 用途 | 结论 |
+|---|---|---|
+| `...S06-V3` | 三分区（75% 行走 / 12.5% 越障 / 12.5% 起身） | 行走 OK；越障/起身未成 |
+| `...S06-V4` | 越障专项（50% 越障） | 轮式行走指标最佳，跳跃仍未成 |
+| `...S06-V5` | 起身专项（50% 倒地） | 起身 0% |
+| `...S06-JumpTestHw90` | 跳跃窗口内高刚度 PD（effort 90） | 抬升 +0.10 m（后证为姿态假象） |
+| `...S06-JumpTestStrong` | effort 250 N·m（超真机，仅参考） | 说明瓶颈在执行器；不可用于真机 |
+
+### 历史（原始腿长 ×1.0 + 120 N·m，结论不可迁移到当前配置）
+
+| 任务 ID | 说明 |
+|---|---|
+| `Isaac-Velocity-Flat-Nezha` | 原始平地任务 |
+| `Isaac-Velocity-Flat-Nezha-GetUp` | 原始起身任务（曾达 37.8%，120 N·m） |
+| `Isaac-Velocity-Flat-Nezha-Full` / `...S06-Full` | 早期"全能"任务（腿式假步态问题的来源） |
+
+> ⚠ 力矩口径：`nezha_cfg` / `nezha_s06_cfg` 的 `effort_limit_sim` 已改为 **90 N·m**
+> （真机 60 A × kt 2.1）。**120 N·m 下训练的 checkpoint 在新配置下行为会变**，
+> 引用旧结果时务必注意这一点。
+
 ## 附录 A：完整命令速查
 
 ```bash
